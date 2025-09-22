@@ -12,6 +12,8 @@ export default function Home() {
       <Navigation />
       <HeroSection />
       <ProblemSection />
+      <AMMComparison />
+      <HowItWorksSection />
     </main>
   );
 }
