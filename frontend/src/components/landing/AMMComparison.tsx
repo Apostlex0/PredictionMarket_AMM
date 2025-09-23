@@ -77,11 +77,10 @@ export default function AMMComparison() {
             <button
               key={amm.id}
               onClick={() => setSelectedAMM(amm.id)}
-              className={`relative group px-6 py-4 rounded-2xl transition-all duration-300 ${
-                selectedAMM === amm.id
+              className={`relative group px-6 py-4 rounded-2xl transition-all duration-300 ${selectedAMM === amm.id
                   ? 'bg-white/10 backdrop-blur-sm border border-white/20'
                   : 'bg-white/5 backdrop-blur-sm border border-white/5 hover:border-white/10'
-              }`}
+                }`}
             >
               <div className="flex items-center space-x-3">
                 <div className={`p-2 rounded-lg bg-gradient-to-r ${amm.color}`}>
@@ -132,13 +131,13 @@ export default function AMMComparison() {
 
             <div className="pt-6 border-t border-white/10">
               <p className="text-sm text-gray-500 leading-relaxed">
-                {selectedAMM === 'pm-amm' && 
+                {selectedAMM === 'pm-amm' &&
                   "The pm-AMM curve is derived from the normal distribution CDF (Φ) and PDF (φ), creating optimal liquidity distribution for prediction markets based on Gaussian score dynamics."
                 }
-                {selectedAMM === 'cpmm' && 
+                {selectedAMM === 'cpmm' &&
                   "The constant product formula (x·y=k) distributes liquidity equally at all price levels, which is suboptimal for bounded outcome tokens that behave differently than typical assets."
                 }
-                {selectedAMM === 'lmsr' && 
+                {selectedAMM === 'lmsr' &&
                   "LMSR was designed for prediction markets but concentrates liquidity at wrong locations - it provides more depth at extremes when we actually need it at 50%."
                 }
               </p>
@@ -158,7 +157,7 @@ function CurveVisualization({ ammType }: { ammType: 'pm-amm' | 'cpmm' | 'lmsr' }
         {/* Axes */}
         <line x1="50" y1="250" x2="350" y2="250" stroke="#374151" strokeWidth="2" />
         <line x1="50" y1="50" x2="50" y2="250" stroke="#374151" strokeWidth="2" />
-        
+
         {/* Labels */}
         <text x="200" y="280" fill="#9CA3AF" fontSize="12" textAnchor="middle">
           Price (Probability)

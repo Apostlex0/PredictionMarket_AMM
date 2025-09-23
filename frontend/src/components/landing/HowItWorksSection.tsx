@@ -53,7 +53,7 @@ export default function HowItWorksSection() {
     <section className="relative py-32 px-6">
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-to-b from-black via-slate-950/20 to-black"></div>
-      
+
       <div className="relative z-10 max-w-7xl mx-auto">
         {/* Header */}
         <div className="text-center mb-20">
@@ -77,20 +77,18 @@ export default function HowItWorksSection() {
             <button
               key={idx}
               onClick={() => setActiveStep(idx)}
-              className={`relative group px-6 py-3 rounded-xl transition-all duration-300 ${
-                activeStep === idx
+              className={`relative group px-6 py-3 rounded-xl transition-all duration-300 ${activeStep === idx
                   ? 'bg-white/10 backdrop-blur-sm border border-white/20'
                   : 'bg-white/5 backdrop-blur-sm border border-white/5 hover:border-white/10'
-              }`}
+                }`}
             >
               <div className="flex items-center space-x-3">
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold font-[family-name:var(--font-geist-mono)] ${
-                  activeStep === idx
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold font-[family-name:var(--font-geist-mono)] ${activeStep === idx
                     ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white'
                     : activeStep > idx
-                    ? 'bg-cyan-500/20 text-cyan-400'
-                    : 'bg-white/5 text-gray-500'
-                }`}>
+                      ? 'bg-cyan-500/20 text-cyan-400'
+                      : 'bg-white/5 text-gray-500'
+                  }`}>
                   {activeStep > idx ? <CheckCircle2 className="w-5 h-5" /> : idx + 1}
                 </div>
                 <span className="hidden sm:block text-sm font-medium text-gray-300">
@@ -197,7 +195,7 @@ function StepVisualization({ type }: { type: 'brownian' | 'cdf' | 'equation' | '
           {/* Labels */}
           <text x="200" y="280" fill="#9CA3AF" fontSize="14" textAnchor="middle">Time</text>
           <text x="30" y="155" fill="#9CA3AF" fontSize="14">Z=0</text>
-          
+
           <defs>
             <linearGradient id="walk-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="#06b6d4" />
@@ -225,7 +223,7 @@ function StepVisualization({ type }: { type: 'brownian' | 'cdf' | 'equation' | '
           {/* Labels */}
           <text x="200" y="295" fill="#9CA3AF" fontSize="14" textAnchor="middle">Score (Z)</text>
           <text x="25" y="150" fill="#9CA3AF" fontSize="14">P</text>
-          
+
           <defs>
             <linearGradient id="cdf-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="#3b82f6" />
@@ -297,7 +295,7 @@ function StepVisualization({ type }: { type: 'brownian' | 'cdf' | 'equation' | '
           <text x="25" y="150" fill="#9CA3AF" fontSize="14">L</text>
           <text x="60" y="90" fill="#06b6d4" fontSize="12">L₀</text>
           <text x="340" y="270" fill="#8b5cf6" fontSize="12">0</text>
-          
+
           <defs>
             <linearGradient id="time-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="#06b6d4" />
