@@ -14,6 +14,7 @@ export default function Home() {
       <ProblemSection />
       <AMMComparison />
       <HowItWorksSection />
+      <FeaturesSection />
     </main>
   );
 }

@@ -12,10 +12,8 @@ const Navigation: React.FC = () => {
 
   const navItems = [
     { href: '/markets', label: 'Markets', icon: <TrendingUp className="w-4 h-4" /> },
-    { href: '/swap', label: 'Trade', icon: <Activity className="w-4 h-4" /> },
-    { href: '/liquidity', label: 'Liquidity', icon: <Droplets className="w-4 h-4" /> },
-    { href: '/create', label: 'Create', icon: <Plus className="w-4 h-4" /> },
-    { href: '/analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" /> },
+    { href: '/markets/create', label: 'Create', icon: <Plus className="w-4 h-4" /> },
+    // { href: '/portfolio', label: 'Portfolio', icon: <User className="w-4 h-4" /> },
   ];
 
   const isActive = (href: string) => pathname === href;
