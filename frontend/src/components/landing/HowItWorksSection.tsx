@@ -1,7 +1,8 @@
 // components/landing/HowItWorksSection.tsx
 'use client';
 import { useState } from 'react';
-import { CheckCircle2, ArrowRight } from 'lucide-react';
+import { CheckCircle2, TrendingUp, BarChart3, Droplets, Sparkles, Zap, Activity, ArrowRight, Star, Rocket } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 export default function HowItWorksSection() {
   const [activeStep, setActiveStep] = useState(0);
@@ -51,126 +52,343 @@ export default function HowItWorksSection() {
 
   return (
     <section className="relative py-32 px-6">
-      {/* Background */}
+      {/* Enhanced Background */}
       <div className="absolute inset-0 bg-gradient-to-b from-black via-slate-950/20 to-black"></div>
+      
+      {/* Animated Background Elements */}
+      <motion.div 
+        className="absolute top-20 left-1/4 w-96 h-96 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-full blur-3xl"
+        animate={{
+          scale: [1, 1.2, 1],
+          opacity: [0.3, 0.6, 0.3],
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+      <motion.div 
+        className="absolute bottom-20 right-1/4 w-96 h-96 bg-gradient-to-r from-pink-500/10 to-purple-500/10 rounded-full blur-3xl"
+        animate={{
+          scale: [1.2, 1, 1.2],
+          opacity: [0.4, 0.7, 0.4],
+        }}
+        transition={{
+          duration: 6,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+
+      {/* Floating Mathematical Elements */}
+      <motion.div
+        className="absolute top-40 right-20 text-cyan-400/20"
+        animate={{
+          y: [0, -20, 0],
+          rotate: [0, 360, 0],
+        }}
+        transition={{
+          duration: 10,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      >
+        <Activity className="w-8 h-8" />
+      </motion.div>
+      <motion.div
+        className="absolute bottom-60 left-16 text-purple-400/20"
+        animate={{
+          y: [0, 15, 0],
+          x: [0, 10, 0],
+        }}
+        transition={{
+          duration: 7,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 1
+        }}
+      >
+        <Star className="w-6 h-6" />
+      </motion.div>
 
       <div className="relative z-10 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-20">
-          <h2 className="text-5xl md:text-6xl font-bold mb-6 font-[family-name:var(--font-geist-mono)]">
-            <span className="bg-gradient-to-r from-white to-gray-400 text-transparent bg-clip-text">
-              How
-            </span>
-            {' '}
-            <span className="bg-gradient-to-r from-cyan-400 to-blue-400 text-transparent bg-clip-text">
-              It Works
-            </span>
-          </h2>
-          <p className="text-xl text-gray-400 max-w-3xl mx-auto">
-            From mathematical theory to working implementation in 5 steps
-          </p>
-        </div>
+        {/* Enhanced Header */}
+        <motion.div 
+          className="text-center mb-20"
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8 }}
+          viewport={{ once: true }}
+        >
+          <motion.h2 
+            className="text-5xl md:text-6xl font-bold mb-6 font-[family-name:var(--font-geist-mono)] relative"
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1, delay: 0.2 }}
+            viewport={{ once: true }}
+          >
+            <motion.span 
+              className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 text-transparent bg-clip-text relative"
+              animate={{
+                backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
+              }}
+              transition={{
+                duration: 5,
+                repeat: Infinity,
+                ease: "linear"
+              }}
+              style={{
+                backgroundSize: '200% 200%'
+              }}
+            >
+              How It Works
+              <motion.div
+                className="absolute top-2 -right-12"
+                animate={{
+                  rotate: [0, 360],
+                  scale: [1, 1.3, 1],
+                }}
+                transition={{
+                  duration: 3,
+                  repeat: Infinity,
+                }}
+              >
+                <Zap className="w-6 h-6 text-cyan-400" />
+              </motion.div>
+            </motion.span>
+          </motion.h2>
+          <motion.p 
+            className="text-xl text-gray-400 max-w-3xl mx-auto"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            transition={{ duration: 0.8, delay: 0.4 }}
+            viewport={{ once: true }}
+          >
+            The mathematical foundation behind optimal prediction market making
+          </motion.p>
+        </motion.div>
 
-        {/* Steps Navigation */}
-        <div className="flex flex-wrap justify-center gap-3 mb-16">
+        {/* Enhanced Steps Navigation */}
+        <motion.div 
+          className="flex flex-wrap justify-center gap-3 mb-16"
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.6 }}
+          viewport={{ once: true }}
+        >
           {steps.map((step, idx) => (
-            <button
+            <motion.button
               key={idx}
               onClick={() => setActiveStep(idx)}
               className={`relative group px-6 py-3 rounded-xl transition-all duration-300 ${activeStep === idx
                   ? 'bg-white/10 backdrop-blur-sm border border-white/20'
                   : 'bg-white/5 backdrop-blur-sm border border-white/5 hover:border-white/10'
                 }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.8 + idx * 0.1 }}
+              viewport={{ once: true }}
             >
               <div className="flex items-center space-x-3">
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold font-[family-name:var(--font-geist-mono)] ${activeStep === idx
-                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white'
-                    : activeStep > idx
-                      ? 'bg-cyan-500/20 text-cyan-400'
-                      : 'bg-white/5 text-gray-500'
-                  }`}>
+                <motion.div 
+                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold font-[family-name:var(--font-geist-mono)] ${activeStep === idx
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white'
+                      : activeStep > idx
+                        ? 'bg-cyan-500/20 text-cyan-400'
+                        : 'bg-white/5 text-gray-500'
+                    }`}
+                  whileHover={{ rotate: 360 }}
+                  transition={{ duration: 0.5 }}
+                >
                   {activeStep > idx ? <CheckCircle2 className="w-5 h-5" /> : idx + 1}
-                </div>
+                </motion.div>
                 <span className="hidden sm:block text-sm font-medium text-gray-300">
                   {step.title}
                 </span>
               </div>
               {activeStep === idx && (
-                <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full"></div>
+                <motion.div 
+                  className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full"
+                  layoutId="activeStepIndicator"
+                  transition={{ duration: 0.3 }}
+                />
               )}
-            </button>
+            </motion.button>
           ))}
-        </div>
+        </motion.div>
 
-        {/* Active Step Content */}
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
+        {/* Enhanced Active Step Content */}
+        <motion.div 
+          className="grid lg:grid-cols-2 gap-12 items-center"
+          key={activeStep}
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
           {/* Left: Explanation */}
-          <div className="space-y-6">
-            <div className="inline-block px-4 py-2 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30">
-              <span className="text-sm font-medium text-cyan-300 font-[family-name:var(--font-geist-mono)]">
-                Step {activeStep + 1} of {steps.length}
+          <motion.div 
+            className="space-y-6"
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+          >
+            <motion.div 
+              className="inline-block px-4 py-2 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30"
+              whileHover={{ scale: 1.05 }}
+            >
+              <span className="text-sm font-medium text-cyan-300 font-[family-name:var(--font-geist-mono)] flex items-center space-x-2">
+                <Sparkles className="w-4 h-4" />
+                <span>Step {activeStep + 1} of {steps.length}</span>
               </span>
-            </div>
+            </motion.div>
 
-            <h3 className="text-4xl font-bold text-white font-[family-name:var(--font-geist-mono)]">
+            <motion.h3 
+              className="text-4xl font-bold text-white font-[family-name:var(--font-geist-mono)]"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+            >
               {steps[activeStep].title}
-            </h3>
+            </motion.h3>
 
-            <p className="text-lg text-blue-300 font-medium">
+            <motion.p 
+              className="text-lg text-blue-300 font-medium"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.4 }}
+            >
               {steps[activeStep].subtitle}
-            </p>
+            </motion.p>
 
-            <p className="text-lg text-gray-400 leading-relaxed">
+            <motion.p 
+              className="text-lg text-gray-400 leading-relaxed"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.5 }}
+            >
               {steps[activeStep].description}
-            </p>
+            </motion.p>
 
-            {/* Formula Display */}
-            <div className="relative group">
-              <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl blur-xl"></div>
-              <div className="relative bg-black/50 backdrop-blur-sm border border-white/10 rounded-2xl p-6">
-                <div className="text-sm text-gray-500 mb-2 font-[family-name:var(--font-geist-mono)]">
-                  Mathematical Formula:
+            {/* Enhanced Formula Display */}
+            <motion.div 
+              className="relative group"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, delay: 0.6 }}
+            >
+              <motion.div 
+                className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl blur-xl"
+                animate={{ 
+                  scale: [1, 1.05, 1],
+                  opacity: [0.5, 0.8, 0.5] 
+                }}
+                transition={{ 
+                  duration: 3, 
+                  repeat: Infinity, 
+                  ease: "easeInOut" 
+                }}
+              />
+              <motion.div 
+                className="relative bg-black/50 backdrop-blur-sm border border-white/10 rounded-2xl p-6"
+                whileHover={{ 
+                  borderColor: "rgba(6, 182, 212, 0.3)",
+                  boxShadow: "0 10px 40px -10px rgba(6, 182, 212, 0.2)"
+                }}
+              >
+                <div className="text-sm text-gray-500 mb-2 font-[family-name:var(--font-geist-mono)] flex items-center space-x-2">
+                  <Activity className="w-4 h-4" />
+                  <span>Mathematical Formula:</span>
                 </div>
-                <div className="text-2xl text-center text-white font-mono py-4 overflow-x-auto">
+                <motion.div 
+                  className="text-2xl text-center text-white font-mono py-4 overflow-x-auto"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.8, delay: 0.8 }}
+                >
                   {steps[activeStep].formula}
-                </div>
-              </div>
-            </div>
+                </motion.div>
+              </motion.div>
+            </motion.div>
 
-            <p className="text-gray-400 leading-relaxed">
+            <motion.p 
+              className="text-gray-400 leading-relaxed"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.7 }}
+            >
               {steps[activeStep].explanation}
-            </p>
+            </motion.p>
 
-            {/* Navigation Buttons */}
-            <div className="flex items-center space-x-4 pt-4">
+            {/* Enhanced Navigation Buttons */}
+            <motion.div 
+              className="flex items-center space-x-4 pt-4"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.8 }}
+            >
               {activeStep > 0 && (
-                <button
+                <motion.button
                   onClick={() => setActiveStep(activeStep - 1)}
                   className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl transition-all duration-300 text-gray-300 hover:text-white"
+                  whileHover={{ scale: 1.05, x: -5 }}
+                  whileTap={{ scale: 0.95 }}
                 >
                   Previous
-                </button>
+                </motion.button>
               )}
               {activeStep < steps.length - 1 && (
-                <button
+                <motion.button
                   onClick={() => setActiveStep(activeStep + 1)}
-                  className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 rounded-xl transition-all duration-300 text-white font-medium flex items-center space-x-2"
+                  className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 rounded-xl transition-all duration-300 text-white font-medium flex items-center space-x-2 overflow-hidden relative"
+                  whileHover={{ scale: 1.05, x: 5 }}
+                  whileTap={{ scale: 0.95 }}
                 >
-                  <span>Next Step</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent"
+                    initial={{ x: '-100%' }}
+                    whileHover={{ x: '100%' }}
+                    transition={{ duration: 0.6 }}
+                  />
+                  <span className="relative z-10">Next Step</span>
+                  <ArrowRight className="w-4 h-4 relative z-10" />
+                </motion.button>
               )}
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
 
-          {/* Right: Visualization */}
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-3xl blur-2xl"></div>
-            <div className="relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-3xl p-8 h-[500px]">
+          {/* Right: Enhanced Visualization */}
+          <motion.div 
+            className="relative"
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+          >
+            <motion.div 
+              className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-3xl blur-2xl"
+              animate={{ 
+                scale: [1, 1.02, 1],
+                opacity: [0.3, 0.6, 0.3] 
+              }}
+              transition={{ 
+                duration: 4, 
+                repeat: Infinity, 
+                ease: "easeInOut" 
+              }}
+            />
+            <motion.div 
+              className="relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-3xl p-8 h-[500px]"
+              whileHover={{ 
+                borderColor: "rgba(6, 182, 212, 0.2)",
+                boxShadow: "0 20px 60px -10px rgba(6, 182, 212, 0.1)"
+              }}
+            >
               <StepVisualization type={steps[activeStep].visual as 'brownian' | 'cdf' | 'equation' | 'invariant' | 'dynamic'} />
-            </div>
-          </div>
-        </div>
+            </motion.div>
+          </motion.div>
+        </motion.div>
       </div>
     </section>
   );

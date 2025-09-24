@@ -1,7 +1,8 @@
 // components/landing/AMMComparison.tsx
 'use client';
 import { useState } from 'react';
-import { Activity, TrendingUp, Waves } from 'lucide-react';
+import { Activity, TrendingUp, Waves, Sparkles, Zap, Star } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 export default function AMMComparison() {
   const [selectedAMM, setSelectedAMM] = useState<'pm-amm' | 'cpmm' | 'lmsr'>('pm-amm');
@@ -49,38 +50,146 @@ export default function AMMComparison() {
   ];
 
   return (
-    <section className="relative py-32 px-6 overflow-hidden">
-      {/* Background */}
-      <div className="absolute inset-0 bg-black"></div>
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-cyan-500/5 rounded-full blur-3xl"></div>
+    <section className="relative py-32 px-6">
+      {/* Enhanced Background */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black via-slate-950/30 to-black"></div>
+      
+      {/* Animated Background Elements */}
+      <motion.div 
+        className="absolute top-20 left-1/4 w-96 h-96 bg-gradient-to-r from-cyan-500/8 to-blue-500/8 rounded-full blur-3xl"
+        animate={{
+          scale: [1, 1.2, 1],
+          opacity: [0.3, 0.6, 0.3],
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+      <motion.div 
+        className="absolute bottom-40 right-1/3 w-96 h-96 bg-gradient-to-r from-purple-500/8 to-pink-500/8 rounded-full blur-3xl"
+        animate={{
+          scale: [1.2, 1, 1.2],
+          opacity: [0.4, 0.7, 0.4],
+        }}
+        transition={{
+          duration: 6,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+
+      {/* Floating Elements */}
+      <motion.div
+        className="absolute top-32 right-20 text-cyan-400/30"
+        animate={{
+          y: [0, -15, 0],
+          rotate: [0, 180, 360],
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      >
+        <Star className="w-6 h-6" />
+      </motion.div>
+      <motion.div
+        className="absolute bottom-60 left-16 text-purple-400/30"
+        animate={{
+          y: [0, 20, 0],
+          x: [0, -10, 0],
+        }}
+        transition={{
+          duration: 6,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 2
+        }}
+      >
+        <Zap className="w-5 h-5" />
+      </motion.div>
 
       <div className="relative z-10 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-16">
-          <h2 className="text-5xl md:text-6xl font-bold mb-6 font-[family-name:var(--font-geist-mono)]">
-            <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-400 text-transparent bg-clip-text">
-              Liquidity Distribution
-            </span>
-            <br />
-            <span className="bg-gradient-to-r from-white to-gray-400 text-transparent bg-clip-text">
-              Comparison
-            </span>
-          </h2>
-          <p className="text-xl text-gray-400">
-            See how pm-AMM optimally allocates liquidity compared to alternatives
-          </p>
-        </div>
+        {/* Enhanced Header */}
+        <motion.div 
+          className="text-center mb-20"
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8 }}
+          viewport={{ once: true }}
+        >
+          <motion.h2 
+            className="text-5xl md:text-6xl font-bold mb-6 font-[family-name:var(--font-geist-mono)] relative"
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1, delay: 0.2 }}
+            viewport={{ once: true }}
+          >
+            <motion.span 
+              className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 text-transparent bg-clip-text relative"
+              animate={{
+                backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
+              }}
+              transition={{
+                duration: 5,
+                repeat: Infinity,
+                ease: "linear"
+              }}
+              style={{
+                backgroundSize: '200% 200%'
+              }}
+            >
+              Why pm-AMM?
+              <motion.div
+                className="absolute top-2 -right-12"
+                animate={{
+                  rotate: [0, 360],
+                  scale: [1, 1.3, 1],
+                }}
+                transition={{
+                  duration: 3,
+                  repeat: Infinity,
+                }}
+              >
+                <Sparkles className="w-6 h-6 text-cyan-400" />
+              </motion.div>
+            </motion.span>
+          </motion.h2>
+          <motion.p 
+            className="text-xl text-gray-400 max-w-3xl mx-auto"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            transition={{ duration: 0.8, delay: 0.4 }}
+            viewport={{ once: true }}
+          >
+            Compare our approach with traditional AMMs and see the mathematical advantage
+          </motion.p>
+        </motion.div>
 
-        {/* AMM Selector */}
-        <div className="flex flex-wrap justify-center gap-4 mb-16">
-          {amms.map((amm) => (
-            <button
+        {/* Enhanced AMM Selector */}
+        <motion.div 
+          className="flex flex-wrap justify-center gap-4 mb-16"
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.6 }}
+          viewport={{ once: true }}
+        >
+          {amms.map((amm, index) => (
+            <motion.button
               key={amm.id}
               onClick={() => setSelectedAMM(amm.id)}
               className={`relative group px-6 py-4 rounded-2xl transition-all duration-300 ${selectedAMM === amm.id
                   ? 'bg-white/10 backdrop-blur-sm border border-white/20'
                   : 'bg-white/5 backdrop-blur-sm border border-white/5 hover:border-white/10'
                 }`}
+              whileHover={{ scale: 1.02, y: -2 }}
+              whileTap={{ scale: 0.98 }}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.8 + index * 0.1 }}
+              viewport={{ once: true }}
             >
               <div className="flex items-center space-x-3">
                 <div className={`p-2 rounded-lg bg-gradient-to-r ${amm.color}`}>
@@ -98,9 +207,9 @@ export default function AMMComparison() {
               {selectedAMM === amm.id && (
                 <div className={`absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r ${amm.color} rounded-full`}></div>
               )}
-            </button>
+            </motion.button>
           ))}
-        </div>
+        </motion.div>
 
         {/* Visualization Area */}
         <div className="grid md:grid-cols-2 gap-12 items-center">
@@ -113,20 +222,36 @@ export default function AMMComparison() {
           </div>
 
           {/* Details */}
-          <div className="space-y-6">
+          <motion.div 
+            className="space-y-6"
+            initial={{ opacity: 0, x: 20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+            viewport={{ once: true }}
+          >
             {amms.find(a => a.id === selectedAMM)?.features.map((feature, idx) => (
-              <div
+              <motion.div
                 key={idx}
-                className="flex items-start space-x-4 opacity-0 animate-fadeIn"
-                style={{ animationDelay: `${idx * 100}ms`, animationFillMode: 'forwards' }}
+                className="flex items-start space-x-4"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.4, delay: idx * 0.1 }}
               >
-                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 flex items-center justify-center border border-white/10">
-                  <div className="w-2 h-2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-400"></div>
-                </div>
+                <motion.div 
+                  className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 flex items-center justify-center border border-white/10"
+                  whileHover={{ scale: 1.1, rotate: 180 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <motion.div 
+                    className="w-2 h-2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-400"
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                  />
+                </motion.div>
                 <div>
                   <p className="text-lg text-gray-300">{feature}</p>
                 </div>
-              </div>
+              </motion.div>
             ))}
 
             <div className="pt-6 border-t border-white/10">
@@ -142,7 +267,7 @@ export default function AMMComparison() {
                 }
               </p>
             </div>
-          </div>
+          </motion.div>
         </div>
       </div>
     </section>
