@@ -54,6 +54,36 @@ export default function MarketsPage() {
       expiresAt: new Date('2025-06-30'),
       totalTraders: 892,
     },
+    {
+      id: '4',
+      question: 'Will Manchester City win the Premier League 2024-25?',
+      category: 'sports',
+      probability: 0.45,
+      volume: 89234,
+      liquidity: 23456,
+      expiresAt: new Date('2025-05-25'),
+      totalTraders: 567,
+    },
+    {
+      id: '5',
+      question: 'Will the next US President be a Democrat?',
+      category: 'politics',
+      probability: 0.52,
+      volume: 1234567,
+      liquidity: 345678,
+      expiresAt: new Date('2025-01-20'),
+      totalTraders: 5678,
+    },
+    {
+      id: '6',
+      question: 'Will SpaceX land humans on Mars by 2030?',
+      category: 'science',
+      probability: 0.18,
+      volume: 345678,
+      liquidity: 67890,
+      expiresAt: new Date('2030-01-01'),
+      totalTraders: 2345,
+    },
   ];
 
   return (
