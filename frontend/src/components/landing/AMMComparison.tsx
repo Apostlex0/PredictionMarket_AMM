@@ -274,69 +274,32 @@ export default function AMMComparison() {
   );
 }
 
-// Simplified curve visualization component
+// Graph visualization component using actual images
 function CurveVisualization({ ammType }: { ammType: 'pm-amm' | 'cpmm' | 'lmsr' }) {
+  const getImagePath = () => {
+    switch (ammType) {
+      case 'pm-amm':
+        return '/LP_pm_AMM.jpg';
+      case 'cpmm':
+        return '/LP_CPMM.jpg';
+      case 'lmsr':
+        return '/LP_LOG.jpg';
+      default:
+        return '/LP_pm_AMM.jpg';
+    }
+  };
+
   return (
-    <div className="w-full h-full relative">
-      <svg viewBox="0 0 400 300" className="w-full h-full">
-        {/* Axes */}
-        <line x1="50" y1="250" x2="350" y2="250" stroke="#374151" strokeWidth="2" />
-        <line x1="50" y1="50" x2="50" y2="250" stroke="#374151" strokeWidth="2" />
-
-        {/* Labels */}
-        <text x="200" y="280" fill="#9CA3AF" fontSize="12" textAnchor="middle">
-          Price (Probability)
-        </text>
-        <text x="20" y="150" fill="#9CA3AF" fontSize="12" transform="rotate(-90, 20, 150)">
-          Liquidity
-        </text>
-
-        {/* Draw curves based on AMM type */}
-        {ammType === 'pm-amm' && (
-          <path
-            d="M 50 220 Q 200 100, 350 220"
-            fill="none"
-            stroke="url(#pm-gradient)"
-            strokeWidth="4"
-            className="animate-draw"
-          />
-        )}
-        {ammType === 'cpmm' && (
-          <path
-            d="M 50 150 L 350 150"
-            fill="none"
-            stroke="url(#cpmm-gradient)"
-            strokeWidth="4"
-            className="animate-draw"
-          />
-        )}
-        {ammType === 'lmsr' && (
-          <path
-            d="M 50 120 Q 200 200, 350 120"
-            fill="none"
-            stroke="url(#lmsr-gradient)"
-            strokeWidth="4"
-            className="animate-draw"
-          />
-        )}
-
-        {/* Gradients */}
-        <defs>
-          <linearGradient id="pm-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#06b6d4" />
-            <stop offset="50%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#6366f1" />
-          </linearGradient>
-          <linearGradient id="cpmm-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#f97316" />
-            <stop offset="100%" stopColor="#ef4444" />
-          </linearGradient>
-          <linearGradient id="lmsr-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#06b6d4" />
-          </linearGradient>
-        </defs>
-      </svg>
+    <div className="w-full h-full relative overflow-hidden rounded-2xl">
+      <motion.img
+        key={ammType}
+        src={getImagePath()}
+        alt={`${ammType.toUpperCase()} Liquidity Distribution Graph`}
+        className="w-full h-full object-contain"
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+      />
     </div>
   );
 }
