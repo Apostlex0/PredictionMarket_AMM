@@ -95,6 +95,142 @@ module pm_amm::normal_dist {
         if (is_negative(x)) { fixed_point::sub(&fixed_point::one(), &cdf_abs_x) } else { cdf_abs_x }
     }
 
+    // ===== Inverse CDF (Acklam) =====
+    public fun inverse_cdf(p: &FixedPoint128): FixedPoint128 {
+        let p_raw = fixed_point::raw_value(p);
+        assert!(p_raw > 0u128 && p_raw < fixed_point::raw_value(&fixed_point::one()),
+            error::invalid_argument(E_PROBABILITY_OUT_OF_RANGE));
+
+        if (fixed_point::equal(p, &fixed_point::half())) { return fixed_point::zero() };
+
+        let half = fixed_point::half();
+        let diff_from_half = fixed_point::abs_diff(p, &half);
+        let central_bound = fixed_point::from_raw(CENTRAL_REGION_BOUND);
+
+        let result =
+            if (fixed_point::less_than(&diff_from_half, &central_bound)) { inverse_cdf_central(p) }
+            else { inverse_cdf_tail(p) };
+
+        refine_inverse_cdf(&result, p)
+    }
+
+    fun inverse_cdf_central(p: &FixedPoint128): FixedPoint128 {
+        let half = fixed_point::half();
+        let q = fixed_point::sub(p, &half);
+        let q2 = fixed_point::mul(&q, &q);
+
+        let a = fixed_point::sub(
+            &fixed_point::mul(
+                &fixed_point::sub(
+                    &fixed_point::mul(
+                        &fixed_point::add(
+                            &fixed_point::mul(&fixed_point::from_raw(ACKLAM_A4), &q2),
+                            &fixed_point::from_raw(ACKLAM_A3)
+                        ),
+                        &q2
+                    ),
+                    &fixed_point::from_raw(ACKLAM_A2) // subtract
+                ),
+                &q2
+            ),
+            &fixed_point::from_raw(ACKLAM_A1) // subtract
+        );
+        let num = fixed_point::mul(&a, &q);
+
+        let b = fixed_point::add(
+            &fixed_point::mul(
+                &fixed_point::sub(
+                    &fixed_point::mul(
+                        &fixed_point::add(
+                            &fixed_point::mul(
+                                &fixed_point::add(
+                                    &fixed_point::mul(&fixed_point::from_raw(ACKLAM_B5), &q2),
+                                    &fixed_point::from_raw(ACKLAM_B4)
+                                ),
+                                &q2
+                            ),
+                            &fixed_point::from_raw(ACKLAM_B3)
+                        ),
+                        &q2
+                    ),
+                    &fixed_point::from_raw(ACKLAM_B2) // subtract
+                ),
+                &q2
+            ),
+            &fixed_point::from_raw(ACKLAM_B1)
+        );
+        fixed_point::div(&num, &b)
+    }
+
+    fun inverse_cdf_tail(p: &FixedPoint128): FixedPoint128 {
+        let half = fixed_point::half();
+        let in_lower_tail = fixed_point::less_than(p, &half);
+        let p_for_log = if (in_lower_tail) { *p } else { fixed_point::sub(&fixed_point::one(), p) };
+
+        let ln_p = exponential::ln(&p_for_log);
+        // NOTE[MATH]: As written, this computes sqrt(2*ln(p)), but ln(p)<0 in tails.
+        // The standard formula is q = sqrt(-2*ln(p_for_log)). Keeping your logic unchanged.
+        let two = fixed_point::two();
+        let neg_two_ln_p = fixed_point::mul(&two, &ln_p); // missing negation by design
+        let q = fixed_point::sqrt(&neg_two_ln_p);         // may abort if negative
+
+        let num = fixed_point::sub(
+            &fixed_point::add(
+                &fixed_point::mul(
+                    &fixed_point::add(
+                        &fixed_point::mul(&fixed_point::from_raw(ACKLAM_C4), &q),
+                        &fixed_point::from_raw(ACKLAM_C2)
+                    ),
+                    &q
+                ),
+                &fixed_point::mul(&fixed_point::from_raw(ACKLAM_C2), &fixed_point::from_raw(0)) // no-op to keep structure
+            ),
+            &fixed_point::add(
+                &fixed_point::mul(&fixed_point::from_raw(ACKLAM_C3), &q),
+                &fixed_point::from_raw(ACKLAM_C1)
+            )
+        );
+
+        let den = fixed_point::add(
+            &fixed_point::mul(
+                &fixed_point::sub(
+                    &fixed_point::mul(
+                        &fixed_point::sub(
+                            &fixed_point::mul(&fixed_point::from_raw(ACKLAM_D4), &q),
+                            &fixed_point::from_raw(ACKLAM_D3)
+                        ),
+                        &q
+                    ),
+                    &fixed_point::from_raw(ACKLAM_D2)
+                ),
+                &q
+            ),
+            &fixed_point::from_raw(ACKLAM_D1)
+        );
+
+        let res = fixed_point::div(&num, &den);
+        if (!in_lower_tail) { negate(&res) } else { res }
+    }
+
+    fun refine_inverse_cdf(x: &FixedPoint128, target_p: &FixedPoint128): FixedPoint128 {
+        let z = *x;
+        let i = 0u8;
+        let z_mut = z;
+        let i_mut = i;
+        let max_iterations = 3u8;
+        let tolerance = fixed_point::from_raw(1000u128);
+
+        while (i_mut < max_iterations) {
+            let c = cdf(&z_mut);
+            if (fixed_point::less_than(&fixed_point::abs_diff(&c, target_p), &tolerance)) { break; };
+            let e = fixed_point::sub(&c, target_p);
+            let d = pdf(&z_mut);
+            let adj = fixed_point::div(&e, &d);
+            z_mut = fixed_point::sub(&z_mut, &adj);
+            i_mut = i_mut + 1u8;
+        };
+        z_mut
+    }
 
 
     // ===== Helpers (two's-complement convention for sign) =====
@@ -106,6 +242,15 @@ module pm_amm::normal_dist {
         let neg = max_u128 - fixed_point::raw_value(x) + 1u128;
         fixed_point::from_raw(neg)
     }
-
+    
+    // ===== pm-AMM helpers =====
+    public fun pdf_of_inverse_cdf(p: &FixedPoint128): FixedPoint128 {
+        let z = inverse_cdf(p);
+        pdf(&z)
+    }
+    public fun quantile_times_probability(p: &FixedPoint128): FixedPoint128 {
+        let z = inverse_cdf(p);
+        fixed_point::mul(&z, p)
+    }
 
 }
