@@ -340,6 +340,35 @@ module pm_amm::invariant_amm {
             signed_fixed_point::from_fixed_point(x, false)
         }
     }
+    
+    // ===== Price Impact =====
 
+    public fun calculate_price_impact(
+        reserve_x: u64,
+        reserve_y: u64,
+        liquidity_L: &FixedPoint128,
+        input_amount: u64,
+        is_x_to_y: bool
+    ): FixedPoint128 {
+        let initial_price = calculate_marginal_price(reserve_x, reserve_y, liquidity_L);
+
+        let output = calculate_swap_output(
+            reserve_x,
+            reserve_y,
+            liquidity_L,
+            input_amount,
+            is_x_to_y
+        );
+
+        let (new_x, new_y) = if (is_x_to_y) {
+            (reserve_x + input_amount, reserve_y - output)
+        } else {
+            (reserve_x - output, reserve_y + input_amount)
+        };
+
+        let final_price = calculate_marginal_price(new_x, new_y, liquidity_L);
+        let price_diff = fixed_point::abs_diff(&final_price, &initial_price);
+        fixed_point::div(&price_diff, &initial_price)
+    }
    
 }
