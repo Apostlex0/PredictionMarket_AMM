@@ -85,6 +85,89 @@ module pm_amm::invariant_amm {
         fixed_point::less_than(&abs_val, &tol)
     }
 
+    // ===== Optimal Reserve Calculations =====
+
+    /// x*(P) = L{Φ⁻¹(P)P + φ(Φ⁻¹(P)) - Φ⁻¹(P)}
+    /// y*(P) = L{Φ⁻¹(P)P + φ(Φ⁻¹(P))}
+    public fun calculate_optimal_reserves(
+        price: &FixedPoint128,
+        liquidity_L: &FixedPoint128
+    ): (u64, u64) {
+        assert!(
+            fixed_point::greater_than(price, &fixed_point::zero())
+            && fixed_point::less_than(price, &fixed_point::one()),
+            error::invalid_argument(E_INVALID_PRICE)
+        );
+
+        // z = Φ⁻¹(P)
+        let quantile = normal_dist::inverse_cdf(price);
+        let (quantile_abs, quantile_is_negative) =
+            signed_fixed_point::to_fixed_point(&to_signed_fixed_point(&quantile));
+
+        // φ(Φ⁻¹(P))
+        let pdf_quantile = normal_dist::pdf(&quantile_abs);
+
+        // Φ⁻¹(P) * P
+        let quantile_times_price = fixed_point::mul(&quantile_abs, price);
+
+        // x*: L{Φ⁻¹(P)P + φ - Φ⁻¹(P)}
+        let x_term = if (quantile_is_negative) {
+            // φ + |z|(1 - P)
+            let one_minus_p = fixed_point::sub(&fixed_point::one(), price);
+            let q_1mp = fixed_point::mul(&quantile_abs, &one_minus_p);
+            fixed_point::add(&pdf_quantile, &q_1mp)
+        } else {
+            // φ + |z|(P - 1)  ==  φ - |z|(1 - P)
+            let one_minus_p = fixed_point::sub(&fixed_point::one(), price);
+            let neg_term = fixed_point::mul(&quantile_abs, &one_minus_p);
+            if (fixed_point::greater_than(&pdf_quantile, &neg_term)) {
+                fixed_point::sub(&pdf_quantile, &neg_term)
+            } else {
+                fixed_point::zero()
+            }
+        };
+        let reserve_x = fixed_point::mul(liquidity_L, &x_term);
+
+        // y*: L{Φ⁻¹(P)P + φ}
+        let y_term = if (quantile_is_negative) {
+            // φ - |z|*P
+            let neg_term = fixed_point::mul(&quantile_abs, price);
+            if (fixed_point::greater_than(&pdf_quantile, &neg_term)) {
+                fixed_point::sub(&pdf_quantile, &neg_term)
+            } else {
+                fixed_point::zero()
+            }
+        } else {
+            fixed_point::add(&quantile_times_price, &pdf_quantile)
+        };
+        let reserve_y = fixed_point::mul(liquidity_L, &y_term);
+
+        (fixed_point::to_u64(&reserve_x), fixed_point::to_u64(&reserve_y))
+    }
+
+    /// P = Φ((y-x)/L)
+    public fun calculate_marginal_price(
+        reserve_x: u64,
+        reserve_y: u64,
+        liquidity_L: &FixedPoint128
+    ): FixedPoint128 {
+        let x = fixed_point::from_u64(reserve_x);
+        let y = fixed_point::from_u64(reserve_y);
+
+        let y_minus_x = compute_signed_difference(&y, &x);
+        let z = signed_fixed_point::div(
+            &y_minus_x,
+            &signed_fixed_point::from_fixed_point(liquidity_L, false)
+        );
+
+        let (z_abs, z_is_negative) = signed_fixed_point::to_fixed_point(&z);
+        if (z_is_negative) {
+            let phi_pos = normal_dist::cdf(&z_abs);
+            fixed_point::sub(&fixed_point::one(), &phi_pos)
+        } else {
+            normal_dist::cdf(&z_abs)
+        }
+    }
 
 
     // ===== Helpers =====
