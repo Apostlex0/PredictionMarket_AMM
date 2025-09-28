@@ -104,4 +104,46 @@ module pm_amm::swap_math {
             input_after_fee,
         }
     }
+
+    /// pure marginal price 
+    public fun spot_price(
+        reserve_x: u64,
+        reserve_y: u64,
+        eff_L: &FixedPoint128,
+    ): FixedPoint128 {
+        invariant_amm::calculate_marginal_price(reserve_x, reserve_y, eff_L)
+    }
+
+    /// pure helper matching binary-search behavior from swap_engine
+    public fun calculate_input_for_exact_output(
+        reserve_x: u64,
+        reserve_y: u64,
+        eff_L: &FixedPoint128,
+        fee_rate: u16,
+        exact_output: u64,
+        is_x_to_y: bool,
+    ): u64 {
+        let low = 1u64;
+        let high = if (is_x_to_y) { reserve_x * 10 } else { reserve_y * 10 };
+        let result = 0u64;
+
+        let l = low; let h = high; let r = result;
+        let lo = l; let hi = h; let res = r;
+
+        while (lo <= hi) {
+            let mid = (lo + hi) / 2;
+            let fee_amount = calculate_fee(mid, fee_rate);
+            let input_after_fee = mid - fee_amount;
+
+            let output = invariant_amm::calculate_swap_output(
+                reserve_x, reserve_y, eff_L, input_after_fee, is_x_to_y
+            );
+
+            if (output == exact_output) { return mid }
+            else if (output < exact_output) { res = mid; lo = mid + 1; }
+            else { hi = mid - 1; }
+        };
+
+        res + 1
+    }
 }
