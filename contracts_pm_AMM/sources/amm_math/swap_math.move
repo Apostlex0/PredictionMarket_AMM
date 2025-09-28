@@ -146,4 +146,16 @@ module pm_amm::swap_math {
 
         res + 1
     }
+
+     // ===== Quote Accessors =====
+    public fun get_quote_output_amount(quote: &Quote): u64 { quote.output_amount }
+    public fun get_quote_price_impact(quote: &Quote): FixedPoint128 { quote.price_impact }
+
+    // ===== Outcome Accessors =====
+    public fun get_fee_amount(outcome: &Outcome): u64 { outcome.fee_amount }
+    public fun get_output_amount(outcome: &Outcome): u64 { outcome.output_amount }
+    public fun get_new_reserve_x(outcome: &Outcome): u64 { outcome.new_reserve_x }
+    public fun get_new_reserve_y(outcome: &Outcome): u64 { outcome.new_reserve_y }
+    public fun get_price_impact(outcome: &Outcome): FixedPoint128 { outcome.price_impact }
+    public fun get_input_after_fee(outcome: &Outcome): u64 { outcome.input_after_fee }
 }
