@@ -341,6 +341,56 @@ module pm_amm::invariant_amm {
         }
     }
     
+    // ===== Pool Value Function =====
+
+    /// Calculate pool value V(P) = L * φ(Φ⁻¹(P)) from the paper
+    /// This is the fundamental value function for PM-AMM liquidity calculations
+    public fun calculate_pool_value(
+        price: &FixedPoint128,
+        liquidity_L: &FixedPoint128
+    ): FixedPoint128 {
+        assert!(
+            fixed_point::greater_than(price, &fixed_point::zero())
+            && fixed_point::less_than(price, &fixed_point::one()),
+            error::invalid_argument(E_INVALID_PRICE)
+        );
+
+        // z = Φ⁻¹(P)
+        let quantile = normal_dist::inverse_cdf(price);
+        let (quantile_abs, _quantile_is_negative) =
+            signed_fixed_point::to_fixed_point(&to_signed_fixed_point(&quantile));
+
+        // φ(Φ⁻¹(P)) - PDF at the quantile
+        let pdf_quantile = normal_dist::pdf(&quantile_abs);
+
+        // V(P) = L * φ(Φ⁻¹(P))
+        fixed_point::mul(liquidity_L, &pdf_quantile)
+    }
+
+    /// Calculate the required liquidity parameter L to achieve a target pool value at given price
+    /// Inverse of calculate_pool_value: L = V(P) / φ(Φ⁻¹(P))
+    public fun calculate_liquidity_from_pool_value(
+        price: &FixedPoint128,
+        target_pool_value: &FixedPoint128
+    ): FixedPoint128 {
+        assert!(
+            fixed_point::greater_than(price, &fixed_point::zero())
+            && fixed_point::less_than(price, &fixed_point::one()),
+            error::invalid_argument(E_INVALID_PRICE)
+        );
+
+        // z = Φ⁻¹(P)
+        let quantile = normal_dist::inverse_cdf(price);
+        let (quantile_abs, _quantile_is_negative) =
+            signed_fixed_point::to_fixed_point(&to_signed_fixed_point(&quantile));
+
+        // φ(Φ⁻¹(P))
+        let pdf_quantile = normal_dist::pdf(&quantile_abs);
+
+        // L = V(P) / φ(Φ⁻¹(P))
+        fixed_point::div(target_pool_value, &pdf_quantile)
+    }
+    
     // ===== Price Impact =====
 
     public fun calculate_price_impact(
