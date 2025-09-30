@@ -61,7 +61,7 @@ module pm_amm::liquidity_math {
         invariant_amm::calculate_liquidity_from_pool_value(current_price, target_value_increase)
     }
 
-        /// Creator specifies target price and total value, gets exact token requirements
+    /// Creator specifies target price and total value, gets exact token requirements
     public fun add_initial_liquidity_pm_amm(
         target_price: &FixedPoint128,
         total_value_to_provide: &FixedPoint128
@@ -88,5 +88,45 @@ module pm_amm::liquidity_math {
         assert!(lp_tokens >= (LP_TOKEN_SCALE_FACTOR as u128), E_MINIMUM_LIQUIDITY);
 
         (required_x, required_y, lp_tokens, liquidity_L)
+    }
+
+    /// PM-AMM liquidity addition - maintains optimal reserves for current price
+    public fun add_liquidity_pm_amm(
+        desired_value_increase: &FixedPoint128,
+        current_reserve_x: u64,
+        current_reserve_y: u64,
+        current_L: &FixedPoint128,
+        current_lp_supply: u128
+    ): (u64, u64, u64, u64, u128, FixedPoint128) {
+        // 1. Calculate current market price from reserves
+        let current_price = invariant_amm::calculate_marginal_price(
+            current_reserve_x, current_reserve_y, current_L
+        );
+
+        // 2. Calculate required liquidity increase for desired value increase
+        let liquidity_increase = calculate_required_liquidity_increase(
+            desired_value_increase, &current_price
+        );
+
+        // 3. Calculate new total liquidity parameter
+        let new_L = fixed_point::add(current_L, &liquidity_increase);
+
+        // 4. Calculate optimal reserves for current price with new L
+        let (optimal_new_x, optimal_new_y) = invariant_amm::calculate_optimal_reserves(
+            &current_price, &new_L
+        );
+
+        // 5. Calculate required token amounts (with underflow protection)
+        assert!(optimal_new_x >= current_reserve_x, E_INSUFFICIENT_LIQUIDITY);
+        assert!(optimal_new_y >= current_reserve_y, E_INSUFFICIENT_LIQUIDITY);
+        let required_x = optimal_new_x - current_reserve_x;
+        let required_y = optimal_new_y - current_reserve_y;
+
+        // 6. Calculate LP tokens based on liquidity increase
+        let lp_tokens = calculate_lp_tokens_from_liquidity_increase(
+            &liquidity_increase, current_L, current_lp_supply
+        );
+
+        (required_x, required_y, optimal_new_x, optimal_new_y, lp_tokens, new_L)
     }
 }
