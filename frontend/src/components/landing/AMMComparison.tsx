@@ -15,9 +15,9 @@ export default function AMMComparison() {
       description: 'Uniform LVR across all prices',
       color: 'from-cyan-500 via-blue-500 to-indigo-500',
       features: [
-        'Concentrates liquidity at 50%',
-        'Less liquidity at extremes',
-        'Uniform loss rate',
+        'Uniform LVR across all prices',
+        'Optimal loss distribution',
+        'Consistent loss rate',
         'Time-aware (dynamic variant)'
       ]
     },
@@ -28,9 +28,9 @@ export default function AMMComparison() {
       description: 'x × y = k (traditional AMM)',
       color: 'from-red-500 to-rose-500',
       features: [
-        'Equal liquidity distribution',
+        'Non-uniform LVR distribution',
         'Poor at extreme probabilities',
-        'High LVR at edges',
+        'Excessive LVR at edges',
         'No time awareness'
       ]
     },
@@ -41,9 +41,9 @@ export default function AMMComparison() {
       description: 'Logarithmic market scoring rule',
       color: 'from-violet-500 to-purple-500',
       features: [
-        'Concentrated at edges',
-        'Opposite of what we need',
-        'Inefficient for prediction markets',
+        'High LVR at wrong locations',
+        'Opposite of optimal LVR pattern',
+        'Inefficient loss distribution',
         'Legacy design'
       ]
     }
@@ -257,13 +257,13 @@ export default function AMMComparison() {
             <div className="pt-6 border-t border-white/10">
               <p className="text-sm text-gray-500 leading-relaxed">
                 {selectedAMM === 'pm-amm' &&
-                  "The pm-AMM curve is derived from the normal distribution CDF (Φ) and PDF (φ), creating optimal liquidity distribution for prediction markets based on Gaussian score dynamics."
+                  "The pm-AMM achieves uniform Loss-vs-Rebalancing (LVR) across all prices, meaning the rate of loss to arbitrageurs is proportional to pool value regardless of current probability. This creates optimal risk distribution for prediction markets."
                 }
                 {selectedAMM === 'cpmm' &&
-                  "The constant product formula (x·y=k) distributes liquidity equally at all price levels, which is suboptimal for bounded outcome tokens that behave differently than typical assets."
+                  "The constant product formula (x·y=k) results in non-uniform LVR, with excessive losses at extreme probabilities. This makes it suboptimal for bounded outcome tokens that behave differently than typical assets."
                 }
                 {selectedAMM === 'lmsr' &&
-                  "LMSR was designed for prediction markets but concentrates liquidity at wrong locations - it provides more depth at extremes when we actually need it at 50%."
+                  "LMSR was designed for prediction markets but has high LVR at the wrong locations - it suffers more losses at extremes when the optimal pattern would be uniform LVR across all prices."
                 }
               </p>
             </div>
@@ -279,13 +279,13 @@ function CurveVisualization({ ammType }: { ammType: 'pm-amm' | 'cpmm' | 'lmsr' }
   const getImagePath = () => {
     switch (ammType) {
       case 'pm-amm':
-        return '/LP_pm_AMM.jpg';
+        return '/LVR_PM_AMM.jpeg';
       case 'cpmm':
-        return '/LP_CPMM.jpg';
+        return '/LVR_CPMM.jpg';
       case 'lmsr':
-        return '/LP_LOG.jpg';
+        return '/LVR_LMSR.jpeg';
       default:
-        return '/LP_pm_AMM.jpg';
+        return '/LVR_PM_AMM.jpeg';
     }
   };
 
@@ -294,7 +294,7 @@ function CurveVisualization({ ammType }: { ammType: 'pm-amm' | 'cpmm' | 'lmsr' }
       <motion.img
         key={ammType}
         src={getImagePath()}
-        alt={`${ammType.toUpperCase()} Liquidity Distribution Graph`}
+        alt={`${ammType.toUpperCase()} LVR vs Price Graph`}
         className="w-full h-full object-contain"
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}

@@ -426,30 +426,17 @@ function StepVisualization({ type }: { type: 'brownian' | 'cdf' | 'equation' | '
     ),
     cdf: (
       <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
-        <svg viewBox="0 0 400 300" className="w-full h-full">
-          {/* S-curve for CDF */}
-          <path
-            d="M 50 250 Q 100 240, 150 180 Q 200 100, 250 60 Q 300 30, 350 20"
-            fill="none"
-            stroke="url(#cdf-gradient)"
-            strokeWidth="4"
-            className="animate-draw"
+        <div className="w-full h-full relative overflow-hidden rounded-2xl">
+          <motion.img
+            src="/P_Zscore.jpeg"
+            alt="Price vs Z-score relationship graph"
+            className="w-full h-full object-contain"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
           />
-          {/* Axes */}
-          <line x1="50" y1="270" x2="350" y2="270" stroke="#374151" strokeWidth="2" />
-          <line x1="50" y1="30" x2="50" y2="270" stroke="#374151" strokeWidth="2" />
-          {/* Labels */}
-          <text x="200" y="295" fill="#9CA3AF" fontSize="14" textAnchor="middle">Score (Z)</text>
-          <text x="25" y="150" fill="#9CA3AF" fontSize="14">P</text>
-
-          <defs>
-            <linearGradient id="cdf-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#3b82f6" />
-              <stop offset="100%" stopColor="#8b5cf6" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <p className="text-sm text-gray-400 text-center">Normal CDF converts score to probability (0 to 1)</p>
+        </div>
+        <p className="text-sm text-gray-400 text-center">Price relationship with Z-score showing normal CDF conversion</p>
       </div>
     ),
     equation: (
@@ -497,31 +484,17 @@ function StepVisualization({ type }: { type: 'brownian' | 'cdf' | 'equation' | '
     ),
     dynamic: (
       <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
-        <svg viewBox="0 0 400 300" className="w-full h-full">
-          {/* Declining liquidity curve */}
-          <path
-            d="M 50 100 Q 150 120, 250 180 L 350 260"
-            fill="none"
-            stroke="url(#time-gradient)"
-            strokeWidth="4"
-            className="animate-draw"
+        <div className="w-full h-full relative overflow-hidden rounded-2xl">
+          <motion.img
+            src="/L_param.jpeg"
+            alt="Liquidity parameter evolution over time"
+            className="w-full h-full object-contain"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
           />
-          {/* Time axis */}
-          <line x1="50" y1="280" x2="350" y2="280" stroke="#374151" strokeWidth="2" />
-          {/* Labels */}
-          <text x="200" y="295" fill="#9CA3AF" fontSize="14" textAnchor="middle">Time to Expiration</text>
-          <text x="25" y="150" fill="#9CA3AF" fontSize="14">L</text>
-          <text x="60" y="90" fill="#06b6d4" fontSize="12">L₀</text>
-          <text x="340" y="270" fill="#8b5cf6" fontSize="12">0</text>
-
-          <defs>
-            <linearGradient id="time-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#06b6d4" />
-              <stop offset="100%" stopColor="#8b5cf6" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <p className="text-sm text-gray-400 text-center">Liquidity decreases as √(T-t) to maintain constant expected LVR</p>
+        </div>
+        <p className="text-sm text-gray-400 text-center">Liquidity parameter L evolution over time to maintain constant expected LVR</p>
       </div>
     )
   };
