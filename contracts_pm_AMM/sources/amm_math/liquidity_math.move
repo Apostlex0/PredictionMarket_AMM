@@ -18,6 +18,8 @@ module pm_amm::liquidity_math {
     /// Invalid pool value
     const E_INVALID_POOL_VALUE: u64 = 707;
 
+    const LP_TOKEN_SCALE_FACTOR: u64 = 1_000_000;
+
     // ===== PM-AMM Liquidity Helpers =====
 
     /// Calculate LP tokens based on pool value contribution (PM-AMM approach)
@@ -57,5 +59,34 @@ module pm_amm::liquidity_math {
     ): FixedPoint128 {
         // ΔL = ΔV(P) / φ(Φ⁻¹(P))
         invariant_amm::calculate_liquidity_from_pool_value(current_price, target_value_increase)
+    }
+
+        /// Creator specifies target price and total value, gets exact token requirements
+    public fun add_initial_liquidity_pm_amm(
+        target_price: &FixedPoint128,
+        total_value_to_provide: &FixedPoint128
+    ): (u64, u64, u128, FixedPoint128) {
+        assert!(
+            fixed_point::greater_than(target_price, &fixed_point::zero())
+            && fixed_point::less_than(target_price, &fixed_point::one()),
+            E_INVALID_PRICE
+        );
+        assert!(
+            fixed_point::greater_than(total_value_to_provide, &fixed_point::zero()),
+            E_ZERO_LIQUIDITY
+        );
+
+        // Calculate required L to achieve target pool value at target price
+        // L = V(P) / φ(Φ⁻¹(P))
+        let liquidity_L = invariant_amm::calculate_liquidity_from_pool_value(target_price, total_value_to_provide);
+
+        // Calculate EXACT reserves needed for this price and L
+        let (required_x, required_y) = invariant_amm::calculate_optimal_reserves(target_price, &liquidity_L);
+
+        // LP tokens based on liquidity parameter
+        let lp_tokens = calculate_lp_tokens_from_liquidity_increase(&liquidity_L, &fixed_point::zero(), 0);
+        assert!(lp_tokens >= (LP_TOKEN_SCALE_FACTOR as u128), E_MINIMUM_LIQUIDITY);
+
+        (required_x, required_y, lp_tokens, liquidity_L)
     }
 }
