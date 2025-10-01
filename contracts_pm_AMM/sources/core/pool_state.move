@@ -130,4 +130,54 @@ module pm_amm::pool_state {
             cached_price_timestamp: option::none(),
         }
     }
+    
+    // ===== Dynamic Liquidity =====
+    public fun get_effective_liquidity<X, Y>(pool: &Pool<X, Y>): FixedPoint128 {
+        if (!pool.is_dynamic) { return pool.liquidity_parameter_L };
+        let now = timestamp::now_seconds();
+        let expiration = *option::borrow(&pool.expiration_timestamp);
+        assert!(now < expiration, E_POOL_EXPIRED);
+        let initial_L = *option::borrow(&pool.initial_L);
+        let total_duration = expiration - pool.creation_timestamp;
+        let time_remaining = expiration - now;
+        let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
+        let sqrt_ratio = fixed_point::sqrt(&time_ratio);
+        fixed_point::mul(&initial_L, &sqrt_ratio)
+    }
+
+    // ===== Reserve/Fee Updates =====
+    public fun update_reserves<X, Y>(
+        pool: &mut Pool<X, Y>, new_x: u64, new_y: u64, volume_x: u128, volume_y: u128,
+    ) {
+        pool.reserve_x = new_x;
+        pool.reserve_y = new_y;
+        pool.total_volume_x = pool.total_volume_x + volume_x;
+        pool.total_volume_y = pool.total_volume_y + volume_y;
+        pool.swap_count = pool.swap_count + 1;
+        pool.last_interaction_timestamp = timestamp::now_seconds();
+        pool.cached_price = option::none();
+        pool.cached_price_timestamp = option::none();
+    }
+    public fun add_fees<X, Y>(pool: &mut Pool<X, Y>, fee_x: u64, fee_y: u64) {
+        pool.accumulated_fees_x = pool.accumulated_fees_x + fee_x;
+        pool.accumulated_fees_y = pool.accumulated_fees_y + fee_y;
+    }
+
+    // ===== LP =====
+    public fun mint_lp_tokens<X, Y>(pool: &mut Pool<X, Y>, amount: u128) { pool.lp_token_supply = pool.lp_token_supply + amount }
+    public fun burn_lp_tokens<X, Y>(pool: &mut Pool<X, Y>, amount: u128) {
+        assert!(amount <= pool.lp_token_supply, E_INVALID_POOL_PARAMS);
+        pool.lp_token_supply = pool.lp_token_supply - amount
+    }
+
+    // ===== Getters =====
+    public fun get_reserves<X, Y>(pool: &Pool<X, Y>): (u64, u64) { (pool.reserve_x, pool.reserve_y) }
+    public fun get_lp_supply<X, Y>(pool: &Pool<X, Y>): u128 { pool.lp_token_supply }
+    public fun get_fee_rate<X, Y>(pool: &Pool<X, Y>): u16 { pool.fee_rate }
+    public fun get_accumulated_fees<X, Y>(pool: &Pool<X, Y>): (u64, u64) { (pool.accumulated_fees_x, pool.accumulated_fees_y) }
+    
+    /// Get current liquidity parameter (for backward compatibility)
+    public fun get_liquidity_parameter<X, Y>(pool: &Pool<X, Y>): FixedPoint128 {
+        get_effective_liquidity(pool)
+    }
 }
