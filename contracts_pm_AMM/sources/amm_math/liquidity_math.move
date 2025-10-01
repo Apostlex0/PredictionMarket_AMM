@@ -129,4 +129,63 @@ module pm_amm::liquidity_math {
 
         (required_x, required_y, optimal_new_x, optimal_new_y, lp_tokens, new_L)
     }
+
+    // ===== Remove Liquidity (PM-AMM) =====
+
+    /// PM-AMM liquidity removal - maintains optimal reserves for current price
+    public fun remove_liquidity_pm_amm(
+        lp_tokens_to_burn: u128,
+        current_reserve_x: u64,
+        current_reserve_y: u64,
+        current_L: &FixedPoint128,
+        current_lp_supply: u128
+    ): (u64, u64, u64, u64, FixedPoint128) {
+        assert!(lp_tokens_to_burn <= current_lp_supply, E_INVALID_LP_AMOUNT);
+
+        // 1. Calculate current price
+        let current_price = invariant_amm::calculate_marginal_price(
+            current_reserve_x, current_reserve_y, current_L
+        );
+
+        // 2. Calculate value reduction based on LP token share
+        let lp_ratio = fixed_point::from_fraction((lp_tokens_to_burn as u64), (current_lp_supply as u64));
+        let current_pool_value = calculate_current_pool_value(current_reserve_x, current_reserve_y, current_L);
+        let value_reduction = fixed_point::mul(&current_pool_value, &lp_ratio);
+        
+        // 3. Calculate liquidity reduction: ΔL = ΔV / φ(Φ⁻¹(P))
+        let liquidity_reduction = calculate_required_liquidity_increase(&value_reduction, &current_price);
+        let new_L = fixed_point::sub(current_L, &liquidity_reduction);
+
+        // 4. Calculate new optimal reserves for current price with reduced L
+        let (optimal_new_x, optimal_new_y) = if (fixed_point::equal(&new_L, &fixed_point::zero())) {
+            (0, 0)
+        } else {
+            invariant_amm::calculate_optimal_reserves(&current_price, &new_L)
+        };
+
+        // 5. Calculate amounts to withdraw 
+        assert!(current_reserve_x >= optimal_new_x, E_INSUFFICIENT_LIQUIDITY);
+        assert!(current_reserve_y >= optimal_new_y, E_INSUFFICIENT_LIQUIDITY);
+        let withdraw_x = current_reserve_x - optimal_new_x;
+        let withdraw_y = current_reserve_y - optimal_new_y;
+
+        (withdraw_x, withdraw_y, optimal_new_x, optimal_new_y, new_L)
+    }
+
+    /// Calculate LP token value in terms of pool value
+    public fun calculate_lp_value_pm_amm(
+        lp_tokens: u128,
+        total_lp_supply: u128,
+        current_reserve_x: u64,
+        current_reserve_y: u64,
+        current_L: &FixedPoint128
+    ): FixedPoint128 {
+        if (total_lp_supply == 0) {
+            return fixed_point::zero()
+        };
+        
+        let current_pool_value = calculate_current_pool_value(current_reserve_x, current_reserve_y, current_L);
+        let lp_ratio = fixed_point::from_fraction((lp_tokens as u64), (total_lp_supply as u64));
+        fixed_point::mul(&current_pool_value, &lp_ratio)
+    }
 }
