@@ -197,8 +197,7 @@ module pm_amm::pool_state {
         } else {
             pool.liquidity_parameter_L = new_L;
         }
-    }
-    
+    } 
     
     public fun get_pool_info<X, Y>(pool: &Pool<X, Y>): PoolInfo {
         PoolInfo {
@@ -216,4 +215,37 @@ module pm_amm::pool_state {
         let expiration = *option::borrow(&pool.expiration_timestamp);
         now >= expiration
     }
+
+    // ===== Price cache =====
+    public fun get_cached_price<X, Y>(pool: &Pool<X, Y>): Option<FixedPoint128> {
+        if (option::is_some(&pool.cached_price_timestamp)) {
+            let cache_time = *option::borrow(&pool.cached_price_timestamp);
+            let now = timestamp::now_seconds();
+            if (now - cache_time <= 1) { return pool.cached_price }
+        };
+        option::none()
+    }
+    public fun update_price_cache<X, Y>(pool: &mut Pool<X, Y>, price: FixedPoint128) {
+        pool.cached_price = option::some(price);
+        pool.cached_price_timestamp = option::some(timestamp::now_seconds());
+    }
+
+    // ===== Helpers =====
+
+    /// Calculate implied total value from desired token amounts at given price
+    /// This helps convert legacy (desired_x, desired_y) interface to PM-AMM value-based approach
+    fun calculate_implied_value_from_tokens(
+        desired_x: u64,
+        desired_y: u64,
+        price: &FixedPoint128
+    ): FixedPoint128 {
+        let x_value = fixed_point::mul(&fixed_point::from_u64(desired_x), price);
+        let y_value = fixed_point::mul(&fixed_point::from_u64(desired_y), 
+                                      &fixed_point::sub(&fixed_point::one(), price));
+        fixed_point::add(&x_value, &y_value)
+    }
+
+    // ===== Publish / exists =====
+    public fun publish_pool<X, Y>(owner: &signer, pool: Pool<X, Y>) { move_to(owner, pool) }
+    public fun pool_exists<X, Y>(owner: address): bool { exists<Pool<X, Y>>(owner) }
 }
