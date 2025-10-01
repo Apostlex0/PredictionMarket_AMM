@@ -180,4 +180,40 @@ module pm_amm::pool_state {
     public fun get_liquidity_parameter<X, Y>(pool: &Pool<X, Y>): FixedPoint128 {
         get_effective_liquidity(pool)
     }
+    
+    /// Set base liquidity parameter (for dynamic pools, this sets L₀)
+    fun set_liquidity_parameter<X, Y>(pool: &mut Pool<X, Y>, new_L: FixedPoint128) {
+        if (pool.is_dynamic) {
+            // For dynamic pools, we need to set the base L₀, not the effective L
+            // Calculate what L₀ should be to achieve new_L at current time
+            let now = timestamp::now_seconds();
+            let expiration = *option::borrow(&pool.expiration_timestamp);
+            let total_duration = expiration - pool.creation_timestamp;
+            let time_remaining = expiration - now;
+            let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
+            let sqrt_ratio = fixed_point::sqrt(&time_ratio);
+            let new_base_L = fixed_point::div(&new_L, &sqrt_ratio);
+            pool.initial_L = option::some(new_base_L);
+        } else {
+            pool.liquidity_parameter_L = new_L;
+        }
+    }
+    
+    
+    public fun get_pool_info<X, Y>(pool: &Pool<X, Y>): PoolInfo {
+        PoolInfo {
+            reserve_x: pool.reserve_x,
+            reserve_y: pool.reserve_y,
+            liquidity_parameter: get_effective_liquidity(pool),
+            lp_supply: pool.lp_token_supply,
+            fee_rate: pool.fee_rate,
+            is_dynamic: pool.is_dynamic,
+        }
+    }
+    public fun is_expired<X, Y>(pool: &Pool<X, Y>): bool {
+        if (!pool.is_dynamic) { return false };
+        let now = timestamp::now_seconds();
+        let expiration = *option::borrow(&pool.expiration_timestamp);
+        now >= expiration
+    }
 }
