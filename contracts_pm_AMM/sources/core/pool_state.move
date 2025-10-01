@@ -265,6 +265,40 @@ module pm_amm::pool_state {
         invariant_amm::calculate_optimal_reserves(&current_price, &eff_L)
     }
 
+    /// Get pool reserves (friend function)
+    public(friend) fun get_pool_reserves_friend<X, Y>(owner: address): (u64, u64) acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        get_reserves(p)
+    }
+
+    /// Get LP supply (friend function)
+    public(friend) fun get_lp_supply_friend<X, Y>(owner: address): u128 acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        get_lp_supply(p)
+    }
+
+    /// Get effective liquidity (friend function) 
+    public(friend) fun get_effective_liquidity_friend<X, Y>(owner: address): FixedPoint128 acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        get_effective_liquidity(p)
+    }
+
+    /// Get expiration timestamp (friend function)
+    public(friend) fun get_expiration_timestamp_friend<X, Y>(owner: address): u64 acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        if (p.is_dynamic) {
+            *option::borrow(&p.expiration_timestamp)
+        } else {
+            // Static pools don't expire, return far future
+            18446744073709551615 // Max u64
+        }
+    }
+
+    /// Check if pool is dynamic (public function)
+    public fun is_dynamic<X, Y>(pool: &Pool<X, Y>): bool {
+        pool.is_dynamic
+    }
+
     // ===== Publish / exists =====
     public fun publish_pool<X, Y>(owner: &signer, pool: Pool<X, Y>) { move_to(owner, pool) }
     public fun pool_exists<X, Y>(owner: address): bool { exists<Pool<X, Y>>(owner) }
