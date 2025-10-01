@@ -248,4 +248,86 @@ module pm_amm::pool_state {
     // ===== Publish / exists =====
     public fun publish_pool<X, Y>(owner: &signer, pool: Pool<X, Y>) { move_to(owner, pool) }
     public fun pool_exists<X, Y>(owner: address): bool { exists<Pool<X, Y>>(owner) }
+
+        // ===================== SWAP EXECs (friend) =====================
+    
+    public(friend) fun exec_swap_x_to_y<X, Y>(
+        owner: address, amount_in: u64, min_out: u64
+    ): swap_engine::SwapResult acquires Pool {
+        let p = borrow_global_mut<Pool<X, Y>>(owner);
+        assert!(!is_expired(p), 603);
+
+        let (rx, ry) = get_reserves(p);
+        let fee_rate = get_fee_rate(p);
+        let eff_L = get_effective_liquidity(p);
+
+        let out = swap_math::exec_x_to_y(rx, ry, &eff_L, amount_in, fee_rate);
+
+        // slippage vs. min_out (602)
+        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
+
+        update_reserves(p, swap_math::get_new_reserve_x(&out), swap_math::get_new_reserve_y(&out), (amount_in as u128), 0);
+        add_fees(p, swap_math::get_fee_amount(&out), 0);
+
+        swap_engine::mk_result(
+            amount_in,
+            swap_math::get_output_amount(&out),
+            swap_math::get_fee_amount(&out),
+            swap_math::get_new_reserve_x(&out),
+            swap_math::get_new_reserve_y(&out),
+            swap_math::get_price_impact(&out),
+        )
+    }
+
+    /// Y->X swap (same math & codes)
+    public(friend) fun exec_swap_y_to_x<X, Y>(
+        owner: address, amount_in: u64, min_out: u64
+    ): swap_engine::SwapResult acquires Pool {
+        let p = borrow_global_mut<Pool<X, Y>>(owner);
+        assert!(!is_expired(p), 603);
+
+        let (rx, ry) = get_reserves(p);
+        let fee_rate = get_fee_rate(p);
+        let eff_L = get_effective_liquidity(p);
+
+        let out = swap_math::exec_y_to_x(rx, ry, &eff_L, amount_in, fee_rate);
+
+        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
+
+        update_reserves(p, swap_math::get_new_reserve_x(&out), swap_math::get_new_reserve_y(&out), 0, (amount_in as u128));
+        add_fees(p, 0, swap_math::get_fee_amount(&out));
+
+        swap_engine::mk_result(
+            amount_in,
+            swap_math::get_output_amount(&out),
+            swap_math::get_fee_amount(&out),
+            swap_math::get_new_reserve_x(&out),
+            swap_math::get_new_reserve_y(&out),
+            swap_math::get_price_impact(&out),
+        )
+    }
+
+    /// Quote without executing
+    public(friend) fun get_swap_quote_friend<X, Y>(
+        owner: address, amount_in: u64, is_x_to_y: bool
+    ): (u64, FixedPoint128) acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        let (rx, ry) = get_reserves(p);
+        let fee_rate = get_fee_rate(p);
+        let eff_L = get_effective_liquidity(p);
+        let q = swap_math::quote(rx, ry, &eff_L, amount_in, fee_rate, is_x_to_y);
+        (swap_math::get_quote_output_amount(&q), swap_math::get_quote_price_impact(&q))
+    }
+
+    /// Spot with 1s cache
+    public(friend) fun get_spot_price_friend<X, Y>(owner: address): FixedPoint128 acquires Pool {
+        let p = borrow_global_mut<Pool<X, Y>>(owner);
+        let cached = get_cached_price(p);
+        if (option::is_some(&cached)) { return *option::borrow(&cached) };
+        let (rx, ry) = get_reserves(p);
+        let eff_L = get_effective_liquidity(p);
+        let price = swap_math::spot_price(rx, ry, &eff_L);
+        update_price_cache(p, price);
+        price
+    }
 }
