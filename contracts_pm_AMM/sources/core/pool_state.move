@@ -296,6 +296,14 @@ module pm_amm::pool_state {
             18446744073709551615 // Max u64
         }
     }
+    /// Get spot price on direct pool reference
+    /// NOTE: Price cache is always initialized during pool creation with creator's initial_probability
+    /// Price updates happen in swap functions using post-swap virtual reserves
+    public(friend) fun get_spot_price_direct<X, Y>(pool: &mut Pool<X, Y>): FixedPoint128 {
+        let cached = get_cached_price(pool);
+        assert!(option::is_some(&cached), E_INVALID_POOL_PARAMS); // Should never be none after proper initialization
+        *option::borrow(&cached)
+    }
 
     /// Check if pool is dynamic (public function)
     public fun is_dynamic<X, Y>(pool: &Pool<X, Y>): bool {
@@ -436,9 +444,7 @@ module pm_amm::pool_state {
         let current_L = get_effective_liquidity(p);
 
         let (actual_x, actual_y, lp_tokens, new_effective_L) = if (lp_supply == 0) {
-            // Initial liquidity: Use default balanced price (0.5) for address-based interface
-            // The user should use direct functions if they want specific price control
-            let default_price = fixed_point::half(); // 50% probability
+            let default_price = fixed_point::half(); 
             let total_value = calculate_implied_value_from_tokens(desired_x, desired_y, &default_price);
             let (required_x, required_y, lp_tokens, final_L) = 
                 liquidity_math::add_initial_liquidity_pm_amm(&default_price, &total_value);
@@ -586,5 +592,86 @@ module pm_amm::pool_state {
             assert!(total_y >= min_output, LQ_E_INSUFFICIENT_LIQUIDITY);
             total_y
         }
+        
+    }
+
+    // ===== Direct Pool Reference Functions (for prediction market) =====
+    
+    /// Execute X->Y swap on direct pool reference
+    public(friend) fun swap_x_to_y_direct<X, Y>(
+        pool: &mut Pool<X, Y>, amount_in: u64, min_out: u64
+    ): swap_engine::SwapResult {
+        assert!(!is_expired(pool), 603);
+        
+        // 1. Get pre-swap virtual reserves for pricing
+        let (virtual_rx, virtual_ry) = get_virtual_reserves(pool);
+        let fee_rate = get_fee_rate(pool);
+        let eff_L = get_effective_liquidity(pool);
+        
+        // 2. Calculate swap using virtual reserves
+        let out = swap_math::exec_x_to_y(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate);
+        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
+        
+        // 3. Update actual reserves for token movements
+        let (actual_rx, actual_ry) = get_reserves(pool);
+        let fee_amount = swap_math::get_fee_amount(&out);
+        let output_amount = swap_math::get_output_amount(&out);
+        let input_after_fee = amount_in - fee_amount;
+        
+        let new_actual_rx = actual_rx + input_after_fee;
+        let new_actual_ry = actual_ry - output_amount;
+        
+        update_reserves(pool, new_actual_rx, new_actual_ry, (amount_in as u128), 0);
+        add_fees(pool, fee_amount, 0);
+        
+        // 4. Calculate and cache new price using post-swap virtual reserves
+        let virtual_rx_after = virtual_rx + input_after_fee;
+        let virtual_ry_after = virtual_ry - output_amount;
+        let new_price = swap_math::spot_price(virtual_rx_after, virtual_ry_after, &eff_L);
+        update_price_cache(pool, new_price);
+        
+        swap_engine::mk_result(
+            amount_in, output_amount, fee_amount,
+            new_actual_rx, new_actual_ry, swap_math::get_price_impact(&out)
+        )
+    }
+
+    /// Execute Y->X swap on direct pool reference
+    public(friend) fun swap_y_to_x_direct<X, Y>(
+        pool: &mut Pool<X, Y>, amount_in: u64, min_out: u64
+    ): swap_engine::SwapResult {
+        assert!(!is_expired(pool), 603);
+        
+        // 1. Get pre-swap virtual reserves for pricing
+        let (virtual_rx, virtual_ry) = get_virtual_reserves(pool);
+        let fee_rate = get_fee_rate(pool);
+        let eff_L = get_effective_liquidity(pool);
+        
+        // 2. Calculate swap using virtual reserves
+        let out = swap_math::exec_y_to_x(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate);
+        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
+        
+        // 3. Update actual reserves for token movements
+        let (actual_rx, actual_ry) = get_reserves(pool);
+        let fee_amount = swap_math::get_fee_amount(&out);
+        let output_amount = swap_math::get_output_amount(&out);
+        let input_after_fee = amount_in - fee_amount;
+        
+        let new_actual_rx = actual_rx - output_amount;
+        let new_actual_ry = actual_ry + input_after_fee;
+        
+        update_reserves(pool, new_actual_rx, new_actual_ry, 0, (amount_in as u128));
+        add_fees(pool, 0, fee_amount);
+        
+        // 4. Calculate and cache new price using post-swap virtual reserves
+        let virtual_rx_after = virtual_rx - output_amount;
+        let virtual_ry_after = virtual_ry + input_after_fee;
+        let new_price = swap_math::spot_price(virtual_rx_after, virtual_ry_after, &eff_L);
+        update_price_cache(pool, new_price);
+        
+        swap_engine::mk_result(
+            amount_in, output_amount, fee_amount,
+            new_actual_rx, new_actual_ry, swap_math::get_price_impact(&out)
+        )
     }
 }
