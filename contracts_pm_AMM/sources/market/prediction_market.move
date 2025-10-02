@@ -394,5 +394,66 @@ module pm_amm::prediction_market {
         reg.total_markets_created = reg.total_markets_created + 1;
 
         market_id
+    }
+
+    // ===== Collateral Operations =====
+    
+    /// Deposit APT collateral to mint YES and NO tokens (1 APT → 1 YES + 1 NO)
+    public fun mint_prediction_tokens<YesToken, NoToken>(
+        user: &signer, market_addr: address, apt_amount: u64
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(apt_amount > 0, E_ZERO);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        let user_addr = signer::address_of(user);
+        
+        // 1) Transfer APT from user to market's authority account (PRODUCTION READY)
+        let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
+        let market_authority_addr = signer::address_of(&market_signer);
+        pfs::transfer(user, m.apt_metadata, market_authority_addr, apt_amount);
+        
+        // 3) Mint YES tokens (1:1 ratio)
+        let yes_tokens = fa::mint(&m.yes_mint_ref, apt_amount);
+        let user_yes_store = pfs::ensure_primary_store_exists(user_addr, m.yes_metadata);
+        fa::deposit_with_ref(&m.yes_transfer_ref, user_yes_store, yes_tokens);
+        
+        // 4) Mint NO tokens (1:1 ratio)  
+        let no_tokens = fa::mint(&m.no_mint_ref, apt_amount);
+        let user_no_store = pfs::ensure_primary_store_exists(user_addr, m.no_metadata);
+        fa::deposit_with_ref(&m.no_transfer_ref, user_no_store, no_tokens);
+    }
+
+    /// Redeem winning tokens for APT after market resolution
+    public fun redeem_winning_tokens<YesToken, NoToken>(
+        holder: &signer, market_addr: address, token_amount: u64
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(token_amount > 0, E_ZERO);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(m.resolved, E_MARKET_NOT_RESOLVED);
+        
+        let holder_addr = signer::address_of(holder);
+        let winning_outcome = *option::borrow(&m.outcome_yes);
+        
+        if (winning_outcome) {
+            // YES won - redeem YES tokens for APT
+            let holder_yes_store = pfs::primary_store(holder_addr, m.yes_metadata);
+            let yes_tokens = fa::withdraw(holder, holder_yes_store, token_amount);
+            fa::burn(&m.yes_burn_ref, yes_tokens);
+        } else {
+            // NO won - redeem NO tokens for APT  
+            let holder_no_store = pfs::primary_store(holder_addr, m.no_metadata);
+            let no_tokens = fa::withdraw(holder, holder_no_store, token_amount);
+            fa::burn(&m.no_burn_ref, no_tokens);
+        };
+        
+        // Pay out APT 1:1 for winning tokens (PRODUCTION READY)
+        let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
+        pfs::transfer(&market_signer, m.apt_metadata, holder_addr, token_amount);
     }    
 }
