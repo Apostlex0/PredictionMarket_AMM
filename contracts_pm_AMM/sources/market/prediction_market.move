@@ -13,7 +13,8 @@ module pm_amm::prediction_market {
     use aptos_std::table::{Self as atable, Table};
     use aptos_std::string::{Self, String};
 
-
+    use pm_amm::fixed_point::{Self, FixedPoint128};
+    use pm_amm::pool_state::{Self};
 
     // ===== Error Codes =====
     /// Market not found
@@ -79,4 +80,91 @@ module pm_amm::prediction_market {
         outcome_yes: bool,
         timestamp: u64,
     }
+
+    // ===== Registry =====
+    struct MarketRegistry has key {
+        next_market_id: u64,
+        markets: vector<u64>,
+        active_markets: vector<u64>,
+        resolved_markets: vector<u64>,
+        total_markets_created: u64,
+        total_markets_resolved: u64,
+        total_volume_all_markets: u128,
+    }
+
+    // ===== LP accounting =====
+    struct LpAccount has store, drop {
+        lp_balance: u128,
+        // Simplified - no fee index tracking needed with FA vault system
+    }
+
+    // ===== Market resource =====
+    /// YES = X leg, NO = Y leg (keeps spot price = P(YES))
+    struct PredictionMarket<phantom YesToken, phantom NoToken> has key {
+        // identity & pool
+        market_id: u64,
+        creator: address,
+        question: String,
+        description: String,
+        category: String,
+        pool: pool_state::Pool<YesToken, NoToken>,
+
+        // timing & resolution
+        created_at: u64,
+        liquidity_period_ends_at: Option<u64>,
+        expires_at: u64,
+        resolved_at: Option<u64>,
+        resolved: bool,
+        outcome_yes: Option<bool>,
+
+        // economics
+        initial_probability: FixedPoint128,
+        fee_bps: u16,               // swap fee (basis points), used by pool math
+
+        // stats
+        total_volume: u128,
+
+        // events
+        ev_created: EventHandle<MarketCreatedEvent>,
+        ev_trade:   EventHandle<TradeEvent>,
+        ev_resolve: EventHandle<ResolutionEvent>,
+
+        // Added changes
+
+        // ===== FA Token Metadata Objects =====
+        yes_metadata: Object<fa::Metadata>,
+        no_metadata: Object<fa::Metadata>,
+        lp_metadata: Object<fa::Metadata>,
+        apt_metadata: Object<fa::Metadata>, // APT now uses FA framework (post-June 2025)
+        
+        // ===== FA Management References =====
+        yes_mint_ref: fa::MintRef,
+        yes_burn_ref: fa::BurnRef,
+        yes_transfer_ref: fa::TransferRef,
+        no_mint_ref: fa::MintRef,
+        no_burn_ref: fa::BurnRef,
+        no_transfer_ref: fa::TransferRef,
+        lp_mint_ref: fa::MintRef,
+        lp_burn_ref: fa::BurnRef,
+        lp_transfer_ref: fa::TransferRef,
+        
+        // ===== Market Authority =====
+        market_signer_cap: account::SignerCapability, // For controlling market's APT
+        
+         //till here
+
+        // ===== custodial FA vaults =====
+        // Token reserves (pre-minted YES/NO tokens available for trading)
+        yes_reserve: Object<fa::FungibleStore>,
+        no_reserve: Object<fa::FungibleStore>,
+        // Collateral reserve (APT FA backing the prediction tokens)
+        apt_collateral_reserve: Object<fa::FungibleStore>,
+        // Fee vaults (trading fees collected)
+        yes_fee_vault: Object<fa::FungibleStore>,
+        no_fee_vault: Object<fa::FungibleStore>,
+
+        // LP distribution (simplified - fees distributed via FA vaults)
+        // Note: LP supply is tracked in pool.lp_token_supply, not duplicated here
+        lp_accounts: Table<address, LpAccount>
+    }    
 }
