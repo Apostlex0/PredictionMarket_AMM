@@ -51,4 +51,32 @@ module pm_amm::prediction_market {
     /// Default liquidity period for dynamic pools (in seconds)
     /// LPs have this much time to add liquidity before trading can start
     const DEFAULT_LIQUIDITY_PERIOD_SECONDS: u64 = 3600; // 1 hour
+
+        // ===== Events =====
+    struct MarketCreatedEvent has drop, store {
+        market_id: u64,
+        creator: address,
+        question: String,
+        expires_at: u64,
+        initial_probability_raw: u128,
+        fee_bps: u16,
+    }
+
+    struct TradeEvent has drop, store {
+        market_id: u64,
+        trader: address,
+        is_buy: bool,     // always true (buy side); direction in is_yes
+        is_yes: bool,     // true if NO→YES; false if YES→NO
+        amount_in: u64,
+        amount_out: u64,
+        new_probability_raw: u128,
+        timestamp: u64,
+    }
+
+    struct ResolutionEvent has drop, store {
+        market_id: u64,
+        resolver: address,
+        outcome_yes: bool,
+        timestamp: u64,
+    }
 }
