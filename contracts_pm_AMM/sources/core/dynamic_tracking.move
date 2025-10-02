@@ -64,7 +64,7 @@ module pm_amm::dynamic_tracking {
         let lp_supply = pool_state::get_lp_supply_friend<X, Y>(pool_address);
         let expiration = pool_state::get_expiration_timestamp_friend<X, Y>(pool_address);
         
-        // CRITICAL: Check time remaining to avoid division by zero
+        // Check time remaining to avoid division by zero
         let time_remaining = expiration - now;
         if (time_remaining == 0) {
             return fixed_point::zero()
@@ -88,9 +88,69 @@ module pm_amm::dynamic_tracking {
         
         let withdrawal_rate = fixed_point::div(
             &fixed_point::mul(&current_pool_value, &lp_share),
-            &fixed_point::from_u64(2 * time_remaining)  // ✅ TIME-DEPENDENT DENOMINATOR
+            &fixed_point::from_u64(2 * time_remaining) 
         );
         
         fixed_point::mul(&withdrawal_rate, &fixed_point::from_u64(time_elapsed))
+    }
+
+    /// Process automatic withdrawal for an LP
+    /// Returns (x_tokens, y_tokens, dollar_value) to withdraw
+    public fun process_automatic_withdrawal<X, Y>(
+        pool_address: address,
+        lp_address: address,
+        lp_tokens: u128
+    ): (u64, u64, FixedPoint128) acquires DynamicPoolState {
+        let pending = calculate_pending_withdrawal<X, Y>(pool_address, lp_address, lp_tokens);
+        
+        if (fixed_point::equal(&pending, &fixed_point::zero())) {
+            return (0, 0, fixed_point::zero())
+        };
+        
+        // Get current price from cache
+        let current_price = pool_state::get_spot_price_friend<X, Y>(pool_address);
+        
+        // CORRECT PM-AMM APPROACH: Convert dollar value to liquidity, then to optimal reserves
+        // This maintains the PM-AMM invariant: x² + y² = L² × φ(Φ⁻¹(P))²
+        
+        // Step 1: Calculate liquidity reduction needed for the pending dollar value
+        // From paper: V(P) = L × φ(Φ⁻¹(P)), so L = V(P) / φ(Φ⁻¹(P))
+        let liquidity_to_withdraw = invariant_amm::calculate_liquidity_from_pool_value(
+            &current_price, 
+            &pending
+        );
+        
+        // Step 2: Calculate optimal token amounts maintaining PM-AMM invariant
+        // From paper: x*(P) = L × Φ(Φ⁻¹(P) + σ/2), y*(P) = L × Φ(Φ⁻¹(P) - σ/2)
+        // This ensures withdrawn tokens maintain correct mathematical relationship
+        let (x_withdraw, y_withdraw) = invariant_amm::calculate_optimal_reserves(
+            &current_price, 
+            &liquidity_to_withdraw
+        );
+        
+        // Update tracking
+        let tracking = borrow_global_mut<DynamicPoolState>(pool_address);
+        
+        // Update LP's cumulative withdrawals
+        if (!table::contains(&tracking.cumulative_withdrawals, lp_address)) {
+            table::add(&mut tracking.cumulative_withdrawals, lp_address, fixed_point::zero());
+        };
+        let existing = table::borrow_mut(&mut tracking.cumulative_withdrawals, lp_address);
+        *existing = fixed_point::add(existing, &pending);
+        
+        // Update LP's last withdrawal timestamp
+        if (!table::contains(&tracking.last_withdrawal_timestamp, lp_address)) {
+            table::add(&mut tracking.last_withdrawal_timestamp, lp_address, timestamp::now_seconds());
+        } else {
+            *table::borrow_mut(&mut tracking.last_withdrawal_timestamp, lp_address) = timestamp::now_seconds();
+        };
+        
+        // Update total withdrawals
+        tracking.total_cumulative_withdrawals = fixed_point::add(
+            &tracking.total_cumulative_withdrawals,
+            &pending
+        );
+        
+        (x_withdraw, y_withdraw, pending)
     }
 }
