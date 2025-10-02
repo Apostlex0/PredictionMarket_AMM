@@ -88,7 +88,7 @@ module pm_amm::pool_state {
     
     // ===== Create =====
     public fun create_static_pool<X, Y>(
-        initial_x: u64, initial_y: u64, liquidity_L: FixedPoint128, fee_rate: u16, _creator: address,
+        initial_x: u64, initial_y: u64, liquidity_L: FixedPoint128, fee_rate: u16, _creator: address,initial_price: FixedPoint128
     ): Pool<X, Y> {
         assert!(initial_x > 0 && initial_y > 0, E_INVALID_POOL_PARAMS);
         assert!(fee_rate <= 1000, E_INVALID_POOL_PARAMS);
@@ -109,13 +109,13 @@ module pm_amm::pool_state {
             total_volume_y: 0,
             swap_count: 0,
             last_interaction_timestamp: now,
-            cached_price: option::none(),
-            cached_price_timestamp: option::none(),
+            cached_price: option::some(initial_price),
+            cached_price_timestamp: option::some(now),
         }
     }
 
     public fun create_dynamic_pool<X, Y>(
-        initial_x: u64, initial_y: u64, liquidity_L: FixedPoint128, expiration_timestamp: u64, fee_rate: u16, _creator: address,
+        initial_x: u64, initial_y: u64, liquidity_L: FixedPoint128, expiration_timestamp: u64, fee_rate: u16, _creator: address, initial_price:FixedPoint128
     ): Pool<X, Y> {
         let now = timestamp::now_seconds();
         assert!(expiration_timestamp > now, E_INVALID_TIMESTAMP);
@@ -136,8 +136,8 @@ module pm_amm::pool_state {
             total_volume_y: 0,
             swap_count: 0,
             last_interaction_timestamp: now,
-            cached_price: option::none(),
-            cached_price_timestamp: option::none(),
+            cached_price: option::some(initial_price),
+            cached_price_timestamp: option::some(now),
         }
     }
     

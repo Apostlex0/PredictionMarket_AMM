@@ -8,6 +8,8 @@ module pm_amm::swap_engine {
     const E_INVALID_SWAP_DIRECTION: u64 = 604;
     const E_ZERO_AMOUNT: u64 = 605;
 
+    friend pm_amm::pool_state;
+
     struct SwapResult has copy, drop {
         input_amount: u64,
         output_amount: u64,

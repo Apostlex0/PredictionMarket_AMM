@@ -8,6 +8,8 @@ module pm_amm::liquidity_manager {
     const E_MINIMUM_LIQUIDITY: u64 = 704;
     const E_ZERO_LIQUIDITY: u64 = 705;
 
+    friend pm_amm::pool_state;
+
     // ===== Result Structs =====
 
     public struct LiquidityResult has copy, drop {
