@@ -9,6 +9,8 @@ module pm_amm::pool_state {
     use pm_amm::liquidity_manager;
     use pm_amm::invariant_amm;
 
+    friend pm_amm::dynamic_tracking;
+
     // ===== Error Codes (keep your numbers) =====
     /// Pool not initialized
     const E_POOL_NOT_INITIALIZED: u64 = 500;

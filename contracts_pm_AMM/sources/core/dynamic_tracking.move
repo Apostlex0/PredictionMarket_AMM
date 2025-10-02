@@ -226,4 +226,25 @@ module pm_amm::dynamic_tracking {
         
         (total_withdrawn, settlement, total_loss)
     }
+
+    // ===== View Functions =====
+    
+    public fun get_cumulative_withdrawals(pool_address: address, lp_address: address): FixedPoint128 acquires DynamicPoolState {
+        let tracking = borrow_global<DynamicPoolState>(pool_address);
+        if (table::contains(&tracking.cumulative_withdrawals, lp_address)) {
+            *table::borrow(&tracking.cumulative_withdrawals, lp_address)
+        } else {
+            fixed_point::zero()
+        }
+    }
+    
+    public fun get_initial_pool_value(pool_address: address): FixedPoint128 acquires DynamicPoolState {
+        let tracking = borrow_global<DynamicPoolState>(pool_address);
+        tracking.initial_pool_value
+    }
+    
+    /// Check if dynamic tracking exists for a pool
+    public fun tracking_exists(pool_address: address): bool {
+        exists<DynamicPoolState>(pool_address)
+    }
 }
