@@ -166,5 +166,80 @@ module pm_amm::prediction_market {
         // LP distribution (simplified - fees distributed via FA vaults)
         // Note: LP supply is tracked in pool.lp_token_supply, not duplicated here
         lp_accounts: Table<address, LpAccount>
-    }    
+    }
+
+    // ====== internal LP helpers ======
+    fun load_lp_acc(t: &mut Table<address, LpAccount>, who: address): &mut LpAccount {
+        if (!atable::contains(t, who)) {
+            let fresh = LpAccount { lp_balance: 0 };
+            atable::add(t, who, fresh);
+        };
+        atable::borrow_mut(t, who)
+    }
+
+    
+    
+    /// Synchronize pool reserves with actual FA store balances 
+    fun sync_pool_reserves_with_fa_stores<YesToken, NoToken>(m: &mut PredictionMarket<YesToken, NoToken>) {
+        let actual_yes_balance = fa::balance(m.yes_reserve);
+        let actual_no_balance = fa::balance(m.no_reserve);
+        
+        // Update pool state to match actual FA balances
+        pool_state::update_reserves(&mut m.pool, actual_yes_balance, actual_no_balance, 0, 0);
+    }
+        
+        /// Helper function to create FA tokens for a market
+    
+        fun create_market_tokens(
+        creator: &signer,
+        _market_id: u64,
+        _question: &String
+    ): (
+        Object<fa::Metadata>, fa::MintRef, fa::BurnRef, fa::TransferRef, // YES
+        Object<fa::Metadata>, fa::MintRef, fa::BurnRef, fa::TransferRef, // NO  
+        Object<fa::Metadata>, fa::MintRef, fa::BurnRef, fa::TransferRef  // LP
+    ) {
+        // Create YES token
+        let yes_constructor_ref = &object::create_named_object(creator, b"YES_TOKEN");
+        pfs::create_primary_store_enabled_fungible_asset(
+            yes_constructor_ref,
+            option::none(), // unlimited supply
+            string::utf8(b"YES Token"),
+            string::utf8(b"YES"),
+            8, // decimals
+            string::utf8(b""),
+            string::utf8(b"")
+        );
+        let yes_metadata = object::object_from_constructor_ref<fa::Metadata>(yes_constructor_ref);
+
+        let yes_mint_ref = fa::generate_mint_ref(yes_constructor_ref);
+        let yes_burn_ref = fa::generate_burn_ref(yes_constructor_ref);
+        let yes_transfer_ref = fa::generate_transfer_ref(yes_constructor_ref);
+
+        // Create NO token 
+        let no_constructor_ref = &object::create_named_object(creator, b"NO_TOKEN");
+        pfs::create_primary_store_enabled_fungible_asset(
+            no_constructor_ref, option::none(), string::utf8(b"NO Token"),
+            string::utf8(b"NO"), 8, string::utf8(b""), string::utf8(b"")
+        );
+        let no_metadata = object::object_from_constructor_ref<fa::Metadata>(no_constructor_ref);
+        let no_mint_ref = fa::generate_mint_ref(no_constructor_ref);
+        let no_burn_ref = fa::generate_burn_ref(no_constructor_ref);
+        let no_transfer_ref = fa::generate_transfer_ref(no_constructor_ref);
+
+        // Create LP token 
+        let lp_constructor_ref = &object::create_named_object(creator, b"LP_TOKEN");
+        pfs::create_primary_store_enabled_fungible_asset(
+            lp_constructor_ref, option::none(), string::utf8(b"LP Token"),
+            string::utf8(b"LP"), 8, string::utf8(b""), string::utf8(b"")
+        );
+        let lp_metadata = object::object_from_constructor_ref<fa::Metadata>(lp_constructor_ref);
+        let lp_mint_ref = fa::generate_mint_ref(lp_constructor_ref);
+        let lp_burn_ref = fa::generate_burn_ref(lp_constructor_ref);
+        let lp_transfer_ref = fa::generate_transfer_ref(lp_constructor_ref);
+
+        (yes_metadata, yes_mint_ref, yes_burn_ref, yes_transfer_ref,
+         no_metadata, no_mint_ref, no_burn_ref, no_transfer_ref,
+         lp_metadata, lp_mint_ref, lp_burn_ref, lp_transfer_ref)
+    }
 }
