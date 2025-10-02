@@ -455,5 +455,57 @@ module pm_amm::prediction_market {
         // Pay out APT 1:1 for winning tokens (PRODUCTION READY)
         let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
         pfs::transfer(&market_signer, m.apt_metadata, holder_addr, token_amount);
-    }    
+    }  
+
+    // ===== View Functions =====
+    
+    /// Get market information
+    public fun get_market_info<YesToken, NoToken>(market_addr: address): (String, String, String, u64, u64, bool, Option<bool>) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        (m.question, m.description, m.category, m.created_at, m.expires_at, m.resolved, m.outcome_yes)
+    }
+    
+    /// Get market pricing information
+    public fun get_market_price<YesToken, NoToken>(market_addr: address): (FixedPoint128, u128) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        let current_price = pool_state::get_spot_price_direct(&mut m.pool);
+        (current_price, m.total_volume)
+    }
+    
+    /// Get market reserves (YES and NO token amounts available for trading)
+    public fun get_market_reserves<YesToken, NoToken>(market_addr: address): (u64, u64) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        pool_state::get_reserves(&m.pool)
+    }
+    
+    /// Get user's token balances (YES, NO tokens)
+    public fun get_user_balances<YesToken, NoToken>(user_addr: address, market_addr: address): (u64, u64) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        let yes_balance = if (pfs::primary_store_exists(user_addr, m.yes_metadata)) {
+            let yes_store = pfs::primary_store(user_addr, m.yes_metadata);
+            fa::balance(yes_store)
+        } else { 0 };
+        
+        let no_balance = if (pfs::primary_store_exists(user_addr, m.no_metadata)) {
+            let no_store = pfs::primary_store(user_addr, m.no_metadata);
+            fa::balance(no_store)
+        } else { 0 };
+        
+        (yes_balance, no_balance)
+    }
+    
+    /// Check if market exists
+    public fun market_exists<YesToken, NoToken>(market_addr: address): bool {
+        exists<PredictionMarket<YesToken, NoToken>>(market_addr)
+    }
+    
+    /// Get APT metadata object (helper function)
+    public fun apt_metadata(): Object<fa::Metadata> {
+        object::address_to_object<fa::Metadata>(@0xa)
+    }  
 }
