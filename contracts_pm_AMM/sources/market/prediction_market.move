@@ -15,6 +15,8 @@ module pm_amm::prediction_market {
 
     use pm_amm::fixed_point::{Self, FixedPoint128};
     use pm_amm::pool_state::{Self};
+    use pm_amm::liquidity_math;
+    use pm_amm::dynamic_tracking;
 
     // ===== Error Codes =====
     /// Market not found
@@ -242,4 +244,155 @@ module pm_amm::prediction_market {
          no_metadata, no_mint_ref, no_burn_ref, no_transfer_ref,
          lp_metadata, lp_mint_ref, lp_burn_ref, lp_transfer_ref)
     }
+
+    // ===== Create market =====
+
+    public fun create_market<YesToken, NoToken, CollateralToken>(
+        creator: &signer,
+        question: String,
+        description: String,
+        category: String,
+        expires_at: u64,
+        initial_probability: FixedPoint128,
+        total_pool_value: FixedPoint128,  // NEW: replaces initial_x_yes, initial_y_no
+        fee_bps: u16,
+        is_dynamic: bool,
+    ): u64 acquires MarketRegistry {
+        let now = timestamp::now_seconds();
+        assert!(expires_at > now, E_MARKET_EXPIRED);
+        assert!(
+            fixed_point::greater_than(&initial_probability, &fixed_point::zero()) &&
+            fixed_point::less_than(&initial_probability, &fixed_point::one()),
+            E_INVALID_PROBABILITY
+        );
+
+        // Registry (per-creator)
+        let owner = signer::address_of(creator);
+        if (!exists<MarketRegistry>(owner)) {
+            move_to(creator, MarketRegistry {
+                next_market_id: 1,
+                markets: vector::empty<u64>(),
+                active_markets: vector::empty<u64>(),
+                resolved_markets: vector::empty<u64>(),
+                total_markets_created: 0,
+                total_markets_resolved: 0,
+                total_volume_all_markets: 0,
+            });
+        };
+        let reg = borrow_global_mut<MarketRegistry>(owner);
+        let market_id = reg.next_market_id;
+        reg.next_market_id = market_id + 1;
+        // Create FA tokens for this market
+        let (yes_metadata, yes_mint_ref, yes_burn_ref, yes_transfer_ref,
+        no_metadata, no_mint_ref, no_burn_ref, no_transfer_ref,
+        lp_metadata, lp_mint_ref, lp_burn_ref, lp_transfer_ref) = 
+        create_market_tokens(creator, market_id, &question);
+
+        // Calculate optimal L and reserves using PM-AMM math
+        let (required_x_yes, required_y_no, _lp_tokens, liquidity_L) = 
+            liquidity_math::add_initial_liquidity_pm_amm(&initial_probability, &total_pool_value);
+
+        // Pool - create with calculated optimal reserves and initial price cache
+        let pool = if (is_dynamic) {
+            pool_state::create_dynamic_pool<YesToken, NoToken>(
+                required_x_yes, required_y_no, liquidity_L, expires_at, /*fee*/ fee_bps, owner, initial_probability
+            )
+        } else {
+            pool_state::create_static_pool<YesToken, NoToken>(
+                required_x_yes, required_y_no, liquidity_L, /*fee*/ fee_bps, owner, initial_probability
+            )
+        };
+
+        // For now, use placeholder object addresses - proper FA store creation would need metadata
+        // This is a simplified approach for compilation
+        // let yes_reserve = object::address_to_object<fa::FungibleStore>(@0x1);
+        // let no_reserve = object::address_to_object<fa::FungibleStore>(@0x2);
+        // let yes_fee_vault = object::address_to_object<fa::FungibleStore>(@0x3);
+        // let no_fee_vault = object::address_to_object<fa::FungibleStore>(@0x4);
+
+        // Get APT metadata (official APT FA metadata address on all networks)
+        let apt_metadata = object::address_to_object<fa::Metadata>(@0xa);
+        
+        // Create market authority (resource account for controlling APT)
+        let (market_signer, market_signer_cap) = account::create_resource_account(creator, b"prediction_market");
+        
+        // Initialize dynamic tracking for dynamic pools
+        if (is_dynamic) {
+            dynamic_tracking::initialize_dynamic_tracking(&market_signer, total_pool_value);
+        };
+        
+        // Create proper FA stores for reserves and fee vaults
+        let yes_reserve_constructor = &object::create_object_from_account(creator);
+        let yes_reserve = fa::create_store(yes_reserve_constructor, yes_metadata);
+        
+        let no_reserve_constructor = &object::create_object_from_account(creator);
+        let no_reserve = fa::create_store(no_reserve_constructor, no_metadata);
+        
+        // Create APT collateral reserve (now using FA framework)
+        let apt_collateral_constructor = &object::create_object_from_account(creator);
+        let apt_collateral_reserve = fa::create_store(apt_collateral_constructor, apt_metadata);
+        
+        let yes_fee_vault_constructor = &object::create_object_from_account(creator);
+        let yes_fee_vault = fa::create_store(yes_fee_vault_constructor, yes_metadata);
+        
+        let no_fee_vault_constructor = &object::create_object_from_account(creator);
+        let no_fee_vault = fa::create_store(no_fee_vault_constructor, no_metadata);
+
+        // Calculate liquidity period end time for dynamic pools
+        let liquidity_period_ends_at = if (is_dynamic) {
+            option::some(now + DEFAULT_LIQUIDITY_PERIOD_SECONDS)
+        } else {
+            option::none()
+        };
+
+        let m = PredictionMarket<YesToken, NoToken> {
+            market_id, creator: owner, question, description, category,
+            pool,
+            created_at: now, liquidity_period_ends_at, expires_at, resolved_at: option::none(), resolved: false, outcome_yes: option::none(),
+            initial_probability, fee_bps,
+            total_volume: 0,
+            ev_created: account::new_event_handle<MarketCreatedEvent>(creator),
+            ev_trade:   account::new_event_handle<TradeEvent>(creator),
+            ev_resolve: account::new_event_handle<ResolutionEvent>(creator),
+            yes_metadata, no_metadata, lp_metadata, apt_metadata,
+            yes_mint_ref, yes_burn_ref, yes_transfer_ref,
+            no_mint_ref, no_burn_ref, no_transfer_ref,
+            lp_mint_ref, lp_burn_ref, lp_transfer_ref,
+            market_signer_cap,
+            yes_reserve, no_reserve, apt_collateral_reserve, yes_fee_vault, no_fee_vault,
+            lp_accounts: atable::new<address, LpAccount>(),
+        };
+
+        // Fund reserves using calculated PM-AMM optimal amounts
+        // These amounts were calculated by liquidity_math to ensure correct initial price
+        if (required_x_yes > 0) {
+            let initial_yes_tokens = fa::mint(&m.yes_mint_ref, required_x_yes);
+            fa::deposit_with_ref(&m.yes_transfer_ref, m.yes_reserve, initial_yes_tokens);
+        };
+        if (required_y_no > 0) {
+            let initial_no_tokens = fa::mint(&m.no_mint_ref, required_y_no);
+            fa::deposit_with_ref(&m.no_transfer_ref, m.no_reserve, initial_no_tokens);
+        };
+
+        // Seed LP ledger to creator (use pool's LP supply as source of truth)
+        let initial_lp_supply = pool_state::get_lp_supply(&m.pool);
+        if (initial_lp_supply > 0) {
+            let acc = load_lp_acc(&mut m.lp_accounts, owner);
+            acc.lp_balance = acc.lp_balance + initial_lp_supply;
+            // No fee index tracking needed - fees distributed via FA vaults
+        };
+
+        // persist + event
+        let question_copy = m.question;
+        event::emit_event(&mut m.ev_created, MarketCreatedEvent {
+            market_id, creator: owner, question: question_copy, expires_at, initial_probability_raw: fixed_point::raw_value(&initial_probability), fee_bps
+        });
+        move_to(creator, m);
+
+        vector::push_back(&mut reg.markets, market_id);
+        vector::push_back(&mut reg.active_markets, market_id);
+        reg.total_markets_created = reg.total_markets_created + 1;
+
+        market_id
+    }    
 }
