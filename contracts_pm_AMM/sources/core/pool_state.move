@@ -674,4 +674,210 @@ module pm_amm::pool_state {
             new_actual_rx, new_actual_ry, swap_math::get_price_impact(&out)
         )
     }
+
+    // ===================== LIQUIDITY (DIRECT, for prediction_market) =====================
+
+    /// Preview liquidity addition using PM-AMM logic
+    /// For initial liquidity: uses target_price and desired_value_increase
+    /// For additional liquidity: uses current price and desired_value_increase
+    public(friend) fun preview_add_liquidity_direct<X, Y>(
+        pool: &Pool<X, Y>,
+        desired_value_increase: &FixedPoint128,
+        target_price: &FixedPoint128
+    ): AddLiqOutcome {
+        let (rx, ry) = get_reserves(pool);
+        let lp_supply = get_lp_supply(pool);
+        let current_L = get_effective_liquidity(pool);
+
+        if (lp_supply == 0) {
+            // Initial liquidity: use provided target_price
+            let (ax, ay, minted, final_L) = liquidity_math::add_initial_liquidity_pm_amm(
+                target_price, 
+                desired_value_increase
+            );
+            AddLiqOutcome {
+                actual_x: ax, actual_y: ay, minted_lp: minted,
+                new_reserve_x: ax, new_reserve_y: ay, new_L: final_L
+            }
+        } else {
+            // Additional liquidity: use current market price (ignore target_price)
+            let (required_x, required_y, nx, ny, minted, newL) =
+                liquidity_math::add_liquidity_pm_amm(desired_value_increase, rx, ry, &current_L, lp_supply);
+            AddLiqOutcome {
+                actual_x: required_x, actual_y: required_y, minted_lp: minted,
+                new_reserve_x: nx, new_reserve_y: ny, new_L: newL
+            }
+        }
+    }
+
+    /// Add liquidity using PM-AMM logic - maintains optimal reserves for current price
+    /// CRITICAL: This preserves the dynamic L = L₀√(T-t) relationship
+    /// For initial liquidity: uses target_price, for additional: uses current price
+    public(friend) fun add_liquidity_direct<X,Y>(
+        pool: &mut Pool<X,Y>,
+        desired_value_increase: &FixedPoint128,
+        target_price: &FixedPoint128
+    ): AddLiqOutcome {
+        assert!(!is_expired(pool), LQ_E_POOL_EXPIRED);
+
+        let (rx, ry) = get_reserves(pool);
+        let lp_supply = get_lp_supply(pool);
+        let current_effective_L = get_effective_liquidity(pool);
+
+        if (lp_supply == 0) {
+            // Initial liquidity: use provided target_price
+            let (ax, ay, minted, final_L) = liquidity_math::add_initial_liquidity_pm_amm(
+                target_price,
+                desired_value_increase
+            );
+            update_reserves(pool, ax, ay, 0, 0);
+            
+            // For initial liquidity, set the base L parameter
+            if (pool.is_dynamic) {
+                pool.initial_L = option::some(final_L);
+            } else {
+                pool.liquidity_parameter_L = final_L;
+            };
+            
+            mint_lp_tokens(pool, minted);
+            AddLiqOutcome {
+                actual_x: ax, actual_y: ay, minted_lp: minted,
+                new_reserve_x: ax, new_reserve_y: ay, new_L: final_L
+            }
+        } else {
+            let (required_x, required_y, nx, ny, minted, new_effective_L) =
+                liquidity_math::add_liquidity_pm_amm(desired_value_increase, rx, ry, &current_effective_L, lp_supply);
+            
+            update_reserves(pool, nx, ny, 0, 0);
+            
+            // CRITICAL: For dynamic pools, we need to update L₀, not effective L
+            if (pool.is_dynamic) {
+                // Calculate what the new L₀ should be to achieve new_effective_L at current time
+                let now = timestamp::now_seconds();
+                let expiration = *option::borrow(&pool.expiration_timestamp);
+                let total_duration = expiration - pool.creation_timestamp;
+                let time_remaining = expiration - now;
+                let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
+                let sqrt_ratio = fixed_point::sqrt(&time_ratio);
+                let new_base_L = fixed_point::div(&new_effective_L, &sqrt_ratio);
+                pool.initial_L = option::some(new_base_L);
+            } else {
+                pool.liquidity_parameter_L = new_effective_L;
+            };
+            
+            mint_lp_tokens(pool, minted);
+            AddLiqOutcome {
+                actual_x: required_x, actual_y: required_y, minted_lp: minted,
+                new_reserve_x: nx, new_reserve_y: ny, new_L: new_effective_L
+            }
+        }
+    }
+
+    /// Remove liquidity using PM-AMM logic - maintains optimal reserves for current price
+    public(friend) fun remove_liquidity_proportional_direct<X,Y>(
+        pool: &mut Pool<X,Y>,
+        lp_to_burn: u128
+    ): (u64, u64) {
+        assert!(!is_expired(pool), LQ_E_POOL_EXPIRED);
+        let (rx, ry) = get_reserves(pool);
+        let lp_supply = get_lp_supply(pool);
+        let current_effective_L = get_effective_liquidity(pool);
+
+        let (withdraw_x, withdraw_y, nx, ny, new_effective_L) =
+            liquidity_math::remove_liquidity_pm_amm(lp_to_burn, rx, ry, &current_effective_L, lp_supply);
+        
+        burn_lp_tokens(pool, lp_to_burn);
+        update_reserves(pool, nx, ny, 0, 0);
+        
+        // Update liquidity parameter correctly for dynamic pools
+        if (pool.is_dynamic && !fixed_point::equal(&new_effective_L, &fixed_point::zero())) {
+            let now = timestamp::now_seconds();
+            let expiration = *option::borrow(&pool.expiration_timestamp);
+            let total_duration = expiration - pool.creation_timestamp;
+            let time_remaining = expiration - now;
+            let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
+            let sqrt_ratio = fixed_point::sqrt(&time_ratio);
+            let new_base_L = fixed_point::div(&new_effective_L, &sqrt_ratio);
+            pool.initial_L = option::some(new_base_L);
+        } else if (!pool.is_dynamic) {
+            pool.liquidity_parameter_L = new_effective_L;
+        };
+        
+        (withdraw_x, withdraw_y)
+    }
+
+    // ===== optional view helper mirroring your old API =====
+    public(friend) fun calculate_lp_value_friend<X, Y>(
+        owner: address, lp_tokens: u128
+    ): u64 acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        let (rx, ry) = get_reserves(p);
+        let supply = get_lp_supply(p);
+        let effective_L = get_effective_liquidity(p); // ✅ Use effective L for dynamic pools
+        let lp_value = liquidity_math::calculate_lp_value_pm_amm(lp_tokens, supply, rx, ry, &effective_L);
+        fixed_point::to_u64(&lp_value)
+    }
+
+    // ===== Pre-Trading Liquidity Functions =====
+    
+    /// Add liquidity before trading starts (maintains constant price)
+    /// Only allowed on dynamic pools before market activation
+    public(friend) fun add_pretrade_liquidity<X, Y>(
+        pool: &mut Pool<X, Y>,
+        lp_value_contribution: &FixedPoint128,
+        is_market_active: bool
+    ): AddLiqOutcome {
+        // Only allow before trading starts
+        assert!(!is_market_active, LQ_E_MARKET_ALREADY_ACTIVE);
+        assert!(pool.is_dynamic, LQ_E_NOT_DYNAMIC_POOL);
+        
+        let (reserve_x, reserve_y) = get_reserves(pool);
+        let lp_supply = get_lp_supply(pool);
+        let current_base_L0 = *option::borrow(&pool.initial_L);
+        
+        // Get current price (should be same as initial)
+        let current_price = swap_math::spot_price(reserve_x, reserve_y, &current_base_L0);
+        
+        // Calculate current pool value: V = L × φ(Φ⁻¹(P))
+        let current_pool_value = liquidity_math::calculate_current_pool_value(
+            reserve_x, reserve_y, &current_base_L0
+        );
+        
+        // Calculate new total value
+        let new_total_value = fixed_point::add(&current_pool_value, lp_value_contribution);
+        
+        // Calculate new L₀ to achieve new value at SAME price: L_new = V_new / φ(Φ⁻¹(P))
+        let new_base_L0 = invariant_amm::calculate_liquidity_from_pool_value(
+            &current_price, &new_total_value
+        );
+        
+        // Calculate new optimal reserves at this price with new L
+        let (new_reserve_x, new_reserve_y) = invariant_amm::calculate_optimal_reserves(
+            &current_price, &new_base_L0
+        );
+        
+        // Required additional tokens
+        let required_x = new_reserve_x - reserve_x;
+        let required_y = new_reserve_y - reserve_y;
+        
+        // LP tokens proportional to value contribution
+        let lp_ratio = fixed_point::div(lp_value_contribution, &current_pool_value);
+        let new_lp_tokens = fixed_point::mul(&lp_ratio, &fixed_point::from_u128(lp_supply));
+        let lp_tokens = fixed_point::to_u128(&new_lp_tokens);
+        
+        // Update pool state - CRITICAL: Only update base L₀, not effective L
+        pool.initial_L = option::some(new_base_L0);
+        update_reserves(pool, new_reserve_x, new_reserve_y, 0, 0);
+        mint_lp_tokens(pool, lp_tokens);
+        
+        AddLiqOutcome {
+            actual_x: required_x,
+            actual_y: required_y,
+            minted_lp: lp_tokens,
+            new_reserve_x,
+            new_reserve_y,
+            new_L: new_base_L0
+        }
+    }
+
 }
