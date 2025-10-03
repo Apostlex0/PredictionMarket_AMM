@@ -17,6 +17,7 @@ module pm_amm::prediction_market {
     use pm_amm::pool_state::{Self};
     use pm_amm::liquidity_math;
     use pm_amm::dynamic_tracking;
+    use pm_amm::swap_engine;
 
     // ===== Error Codes =====
     /// Market not found
@@ -254,7 +255,7 @@ module pm_amm::prediction_market {
         category: String,
         expires_at: u64,
         initial_probability: FixedPoint128,
-        total_pool_value: FixedPoint128,  // NEW: replaces initial_x_yes, initial_y_no
+        total_pool_value: FixedPoint128,  
         fee_bps: u16,
         is_dynamic: bool,
     ): u64 acquires MarketRegistry {
@@ -303,12 +304,7 @@ module pm_amm::prediction_market {
             )
         };
 
-        // For now, use placeholder object addresses - proper FA store creation would need metadata
-        // This is a simplified approach for compilation
-        // let yes_reserve = object::address_to_object<fa::FungibleStore>(@0x1);
-        // let no_reserve = object::address_to_object<fa::FungibleStore>(@0x2);
-        // let yes_fee_vault = object::address_to_object<fa::FungibleStore>(@0x3);
-        // let no_fee_vault = object::address_to_object<fa::FungibleStore>(@0x4);
+
 
         // Get APT metadata (official APT FA metadata address on all networks)
         let apt_metadata = object::address_to_object<fa::Metadata>(@0xa);
@@ -508,4 +504,123 @@ module pm_amm::prediction_market {
     public fun apt_metadata(): Object<fa::Metadata> {
         object::address_to_object<fa::Metadata>(@0xa)
     }  
+
+    // ===== Trading =====
+    // Users trade YES ↔ NO tokens through AMM, fees go to LP providers
+
+    /// Swap NO tokens for YES tokens (NO → YES)
+    public fun buy_yes<YesToken, NoToken>(
+        buyer: &signer, market_addr: address, amount_in_no: u64, min_out_yes: u64
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(amount_in_no > 0, E_ZERO);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        // For dynamic pools, ensure liquidity period has ended before trading
+        if (pool_state::is_dynamic(&m.pool)) {
+            if (option::is_some(&m.liquidity_period_ends_at)) {
+                let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+                assert!(timestamp::now_seconds() > liquidity_deadline, E_LIQUIDITY_PERIOD_ENDED);
+            };
+        };
+
+        // Execute swap using pool state 
+        let swap_result = pool_state::swap_y_to_x_direct(&mut m.pool, amount_in_no, min_out_yes);
+        let out_yes = swap_engine::output_amount(&swap_result);
+        let fee_no = swap_engine::fee_amount(&swap_result);
+        
+        // 2) FA Operations: Pull NO from buyer
+        let buyer_addr = signer::address_of(buyer);
+        let buyer_no_store = pfs::primary_store(buyer_addr, m.no_metadata);
+        let no_tokens = fa::withdraw(buyer, buyer_no_store, amount_in_no);
+        
+        // 3) Split fee from principal
+        let fee_tokens = fa::extract(&mut no_tokens, fee_no);
+        
+        // 4) Deposit principal to NO reserve 
+        fa::deposit_with_ref(&m.no_transfer_ref, m.no_reserve, no_tokens);
+        
+        // 5) Deposit fee to fee vault
+        fa::deposit_with_ref(&m.no_transfer_ref, m.no_fee_vault, fee_tokens);
+        
+        // 6) Withdraw YES tokens from YES reserve and send to buyer
+        let yes_tokens = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_reserve, out_yes);
+        let buyer_yes_store = pfs::ensure_primary_store_exists(buyer_addr, m.yes_metadata);
+        fa::deposit_with_ref(&m.yes_transfer_ref, buyer_yes_store, yes_tokens);
+        
+        // 7) Synchronize pool reserves with FA store balances (critical for consistency)
+        sync_pool_reserves_with_fa_stores(m);
+        
+        // 8) Update stats and emit event
+        m.total_volume = m.total_volume + (amount_in_no as u128);
+        let new_price = pool_state::get_spot_price_direct(&mut m.pool);
+        event::emit_event(&mut m.ev_trade, TradeEvent {
+            market_id: m.market_id, trader: signer::address_of(buyer),
+            is_buy: true, is_yes: true,
+            amount_in: amount_in_no, amount_out: out_yes,
+            new_probability_raw: fixed_point::raw_value(&new_price),
+            timestamp: timestamp::now_seconds(),
+        });
+    }
+
+    /// Swap YES tokens for NO tokens (YES → NO)
+    public fun buy_no<YesToken, NoToken>(
+        buyer: &signer, market_addr: address, amount_in_yes: u64, min_out_no: u64
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(amount_in_yes > 0, E_ZERO);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        // For dynamic pools, ensure liquidity period has ended before trading
+        if (pool_state::is_dynamic(&m.pool)) {
+            if (option::is_some(&m.liquidity_period_ends_at)) {
+                let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+                assert!(timestamp::now_seconds() > liquidity_deadline, E_LIQUIDITY_PERIOD_ENDED);
+            };
+        };
+
+        // Execute swap using pool state 
+        let swap_result = pool_state::swap_x_to_y_direct(&mut m.pool, amount_in_yes, min_out_no);
+        let out_no = swap_engine::output_amount(&swap_result);
+        let fee_yes = swap_engine::fee_amount(&swap_result);
+
+        // FA Operations: Pull YES from buyer
+        let buyer_addr = signer::address_of(buyer);
+        let buyer_yes_store = pfs::primary_store(buyer_addr, m.yes_metadata);
+        let yes_tokens = fa::withdraw(buyer, buyer_yes_store, amount_in_yes);
+        
+        // Split fee from principal
+        let fee_tokens = fa::extract(&mut yes_tokens, fee_yes);
+        
+        // Deposit principal to YES reserve 
+        fa::deposit_with_ref(&m.yes_transfer_ref, m.yes_reserve, yes_tokens);
+        
+        // Deposit fee to fee vault
+        fa::deposit_with_ref(&m.yes_transfer_ref, m.yes_fee_vault, fee_tokens);
+        
+        // Withdraw NO tokens from NO reserve and send to buyer
+        let no_tokens = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_reserve, out_no);
+        let buyer_no_store = pfs::ensure_primary_store_exists(buyer_addr, m.no_metadata);
+        fa::deposit_with_ref(&m.no_transfer_ref, buyer_no_store, no_tokens);
+
+        // Synchronize pool reserves with FA store balances (critical for consistency)
+        sync_pool_reserves_with_fa_stores(m);
+
+        // Update stats and emit event
+        m.total_volume = m.total_volume + (amount_in_yes as u128);
+        let new_price = pool_state::get_spot_price_direct(&mut m.pool);
+        event::emit_event(&mut m.ev_trade, TradeEvent {
+            market_id: m.market_id, trader: buyer_addr,
+            is_buy: true, is_yes: false,
+            amount_in: amount_in_yes, amount_out: out_no,
+            new_probability_raw: fixed_point::raw_value(&new_price),
+            timestamp: timestamp::now_seconds(),
+        });
+    }
 }
