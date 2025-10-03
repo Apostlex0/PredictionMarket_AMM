@@ -861,8 +861,177 @@ module pm_amm::prediction_market {
         let reg = borrow_global_mut<MarketRegistry>(m.creator);
         reg.total_markets_resolved = reg.total_markets_resolved + 1;
 
-        // move id from active -> resolved if you maintain that list (optional; omitted for brevity)
+        
     }
 
+    // ===== Views =====
+    public fun get_current_probability<YesToken, NoToken>(market_addr: address): FixedPoint128
+    acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        pool_state::get_spot_price_direct(&mut m.pool)
+    }
+
+    // ===== Dynamic Tracking Integration Functions =====
+    /// Get LP loss analytics for frontend display
+    /// Returns (total_wealth, pending_withdrawal, cumulative_withdrawn, current_loss)
+    public fun get_lp_loss_analytics<YesToken, NoToken>(
+        market_addr: address,
+        lp_address: address,
+        lp_tokens: u128
+    ): (FixedPoint128, FixedPoint128, FixedPoint128, FixedPoint128) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
+        if (!pool_state::is_dynamic(&m.pool) || 
+            !dynamic_tracking::tracking_exists(market_signer_addr)) {
+            // Static pool or no tracking - no losses
+            let zero = fixed_point::zero();
+            return (zero, zero, zero, zero)
+        };
+        
+        // Get current wealth and pending withdrawals
+        let total_wealth = dynamic_tracking::calculate_lp_total_wealth<YesToken, NoToken>(
+            market_signer_addr, lp_address, lp_tokens
+        );
+        let pending_withdrawal = dynamic_tracking::calculate_pending_withdrawal<YesToken, NoToken>(
+            market_signer_addr, lp_address, lp_tokens
+        );
+        let cumulative_withdrawn = dynamic_tracking::get_cumulative_withdrawals(market_signer_addr, lp_address);
+        let initial_value = dynamic_tracking::get_initial_pool_value(market_signer_addr);
+        
+        // Calculate LP's initial contribution
+        let lp_supply = pool_state::get_lp_supply(&m.pool);
+        let lp_share = fixed_point::from_fraction((lp_tokens as u64), (lp_supply as u64));
+        let initial_contribution = fixed_point::mul(&lp_share, &initial_value);
+        
+        // Calculate current loss
+        let current_loss = fixed_point::sub(&initial_contribution, &total_wealth);
+        
+        (total_wealth, pending_withdrawal, cumulative_withdrawn, current_loss)
+    }
+
+    /// Get final settlement with loss calculation (for resolved markets)
+    /// Returns (total_withdrawn, settlement_from_winning_tokens, total_loss)
+    public fun get_final_settlement_with_loss<YesToken, NoToken>(
+        market_addr: address,
+        lp_address: address,
+        lp_tokens: u128
+    ): (FixedPoint128, FixedPoint128, FixedPoint128) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(m.resolved, E_MARKET_NOT_RESOLVED);
+        
+        let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
+        if (!pool_state::is_dynamic(&m.pool) || 
+            !dynamic_tracking::tracking_exists(market_signer_addr)) {
+            // Static pool - no dynamic losses
+            let zero = fixed_point::zero();
+            return (zero, zero, zero)
+        };
+        
+        let outcome_x_wins = *option::borrow(&m.outcome_yes);
+        dynamic_tracking::calculate_expiration_settlement<YesToken, NoToken>(
+            market_signer_addr, lp_address, lp_tokens, outcome_x_wins
+        )
+    }
+
+    /// Preview add liquidity without executing - returns (required_yes, required_no, lp_tokens, share_of_pool)
+    public fun preview_add_liquidity<YesToken, NoToken>(
+        market_addr: address,
+        desired_value_increase: FixedPoint128
+    ): (u64, u64, u128, FixedPoint128) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(fixed_point::greater_than(&desired_value_increase, &fixed_point::zero()), E_ZERO);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        // Get current price for liquidity calculation
+        let current_price = pool_state::get_spot_price_direct(&mut m.pool);
+        
+        // Preview the liquidity addition
+        let outcome = pool_state::preview_add_liquidity_direct(&m.pool, &desired_value_increase, &current_price);
+        let required_x = pool_state::get_actual_x(&outcome);
+        let required_y = pool_state::get_actual_y(&outcome);
+        let minted_lp = pool_state::get_minted_lp(&outcome);
+
+        // Calculate share of pool
+        let current_lp_supply = pool_state::get_lp_supply(&m.pool);
+        let total_lp_after = current_lp_supply + minted_lp;
+        let share_of_pool = if (total_lp_after > 0) {
+            fixed_point::from_fraction((minted_lp as u64), (total_lp_after as u64))
+        } else {
+            fixed_point::zero()
+        };
+
+        (required_x, required_y, minted_lp, share_of_pool)
+    }
+
+    /// Preview remove liquidity without executing - returns (yes_tokens_out, no_tokens_out)
+    public fun preview_remove_liquidity<YesToken, NoToken>(
+        market_addr: address,
+        lp_tokens_to_burn: u128
+    ): (u64, u64) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(lp_tokens_to_burn > 0, E_ZERO);
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        // Calculate proportional withdrawal based on current reserves
+        let (reserve_x, reserve_y) = pool_state::get_reserves(&m.pool);
+        let lp_supply = pool_state::get_lp_supply(&m.pool);
+        
+        let tokens_x_out = if (lp_supply > 0) {
+            ((reserve_x as u128) * lp_tokens_to_burn / lp_supply) as u64
+        } else {
+            0
+        };
+        let tokens_y_out = if (lp_supply > 0) {
+            ((reserve_y as u128) * lp_tokens_to_burn / lp_supply) as u64
+        } else {
+            0
+        };
+
+        (tokens_x_out, tokens_y_out)
+    }
+
+    /// Get user's LP position - returns (lp_tokens, share_of_pool, yes_tokens_value, no_tokens_value)
+    public fun get_user_lp_position<YesToken, NoToken>(
+        user_addr: address,
+        market_addr: address
+    ): (u64, FixedPoint128, u64, u64) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        // Get user's LP token balance
+        let lp_store = pfs::primary_store(user_addr, m.lp_metadata);
+        let user_lp_tokens = fa::balance(lp_store);
+
+        // Calculate share of pool
+        let total_lp_supply = pool_state::get_lp_supply(&m.pool);
+        let share_of_pool = if (total_lp_supply > 0) {
+            fixed_point::from_fraction((user_lp_tokens as u64), (total_lp_supply as u64))
+        } else {
+            fixed_point::zero()
+        };
+
+        // Calculate token values based on current reserves
+        let (reserve_x, reserve_y) = pool_state::get_reserves(&m.pool);
+        let user_yes_value = if (total_lp_supply > 0) {
+            (((reserve_x as u128) * (user_lp_tokens as u128)) / (total_lp_supply as u128)) as u64
+        } else {
+            0u64
+        };
+        let user_no_value = if (total_lp_supply > 0) {
+            (((reserve_y as u128) * (user_lp_tokens as u128)) / (total_lp_supply as u128)) as u64
+        } else {
+            0u64
+        };
+        (user_lp_tokens, share_of_pool, user_yes_value, user_no_value)
+    }
 
 }
