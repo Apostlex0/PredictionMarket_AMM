@@ -691,5 +691,94 @@ module pm_amm::prediction_market {
     
    
 
+    /// Remove liquidity and burn LP tokens
+    public fun remove_liquidity<YesToken, NoToken>(
+        provider: &signer, market_addr: address, lp_to_burn: u128
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let who = signer::address_of(provider);
 
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(lp_to_burn > 0, E_ZERO);
+
+
+        // Process automatic withdrawals for dynamic pools first
+        if (pool_state::is_dynamic(&m.pool)) {
+            let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
+            if (dynamic_tracking::tracking_exists(market_signer_addr)) {
+                let acc_temp = load_lp_acc(&mut m.lp_accounts, who);
+                let (x_withdraw, y_withdraw, _dollar_value) = 
+                    dynamic_tracking::process_automatic_withdrawal<YesToken, NoToken>(
+                        market_signer_addr, who, acc_temp.lp_balance
+                    );
+                
+                // Transfer withdrawn tokens to provider
+                let provider_yes_store = pfs::ensure_primary_store_exists(who, m.yes_metadata);
+                let provider_no_store = pfs::ensure_primary_store_exists(who, m.no_metadata);
+                
+                if (x_withdraw > 0) {
+                    let yes_out = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_reserve, x_withdraw);
+                    fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_out);
+                };
+                if (y_withdraw > 0) {
+                    let no_out = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_reserve, y_withdraw);
+                    fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_out);
+                };
+            };
+        };
+
+        let acc = load_lp_acc(&mut m.lp_accounts, who);
+        assert!(acc.lp_balance >= lp_to_burn, E_INSUFF_LP);
+
+        // Calculate and distribute fees BEFORE burning LP tokens
+        let total_lp_supply = pool_state::get_lp_supply(&m.pool);
+        let lp_ratio = fixed_point::from_fraction((lp_to_burn as u64), (total_lp_supply as u64));
+        
+        // Get total fees available in vaults
+        let total_yes_fees = fa::balance(m.yes_fee_vault);
+        let total_no_fees = fa::balance(m.no_fee_vault);
+        
+        // Calculate this LP's share of fees for the tokens being burned
+        let yes_fee_share = fixed_point::mul(&fixed_point::from_u64(total_yes_fees), &lp_ratio);
+        let no_fee_share = fixed_point::mul(&fixed_point::from_u64(total_no_fees), &lp_ratio);
+        
+        let yes_fees_to_claim = fixed_point::to_u64(&yes_fee_share);
+        let no_fees_to_claim = fixed_point::to_u64(&no_fee_share);
+
+        // Prepare provider stores for all transfers
+        let provider_yes_store = pfs::ensure_primary_store_exists(who, m.yes_metadata);
+        let provider_no_store = pfs::ensure_primary_store_exists(who, m.no_metadata);
+
+        // Distribute fees immediately when burning LP tokens
+        if (yes_fees_to_claim > 0) {
+            let yes_fees = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_fee_vault, yes_fees_to_claim);
+            fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_fees);
+        };
+        if (no_fees_to_claim > 0) {
+            let no_fees = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_fee_vault, no_fees_to_claim);
+            fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_fees);
+        };
+
+        // Pool math for proportional liquidity removal
+        let (ax, ay) = pool_state::remove_liquidity_proportional_direct(&mut m.pool, lp_to_burn);
+
+        // Update LP ledger and burn tokens
+        acc.lp_balance = acc.lp_balance - lp_to_burn;
+        // Note: Pool already updated its lp_token_supply, no need to duplicate tracking
+
+        // Burn LP tokens from provider
+        let provider_lp_store = pfs::primary_store(who, m.lp_metadata);
+        let lp_tokens = fa::withdraw(provider, provider_lp_store, (lp_to_burn as u64));
+        fa::burn(&m.lp_burn_ref, lp_tokens);
+
+        // Pay out proportional share from reserves
+        if (ax > 0) {
+            let yes_out = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_reserve, ax);
+            fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_out);
+        };
+        if (ay > 0) {
+            let no_out = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_reserve, ay);
+            fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_out);
+        };
+    }
 }
