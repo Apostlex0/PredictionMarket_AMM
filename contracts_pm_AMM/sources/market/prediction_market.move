@@ -48,6 +48,8 @@ module pm_amm::prediction_market {
     const E_TRACKING_NOT_INITIALIZED: u64 = 9013;
     /// Liquidity period has ended - trading can now begin
     const E_LIQUIDITY_PERIOD_ENDED: u64 = 9014;
+    /// Dynamic pool liquidity can only be removed after market resolution
+    const E_DYNAMIC_LP_REMOVAL_BEFORE_RESOLUTION: u64 = 9015;
 
 
     // fee index scale
@@ -394,12 +396,13 @@ module pm_amm::prediction_market {
 
     // ===== Collateral Operations =====
     
-    /// Deposit APT collateral to mint YES and NO tokens (1 APT → 1 YES + 1 NO)
+    /// Deposit APT collateral to mint YES and NO tokens (100 octas → 1 YES + 1 NO)
+    /// Since 1 APT = 10^8 octas, 1 APT will mint 10^6 (1,000,000) tokens of each type
     public fun mint_prediction_tokens<YesToken, NoToken>(
-        user: &signer, market_addr: address, apt_amount: u64
+        user: &signer, market_addr: address, octa_amount: u64
     ) acquires PredictionMarket {
         assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
-        assert!(apt_amount > 0, E_ZERO);
+        assert!(octa_amount >=100, E_ZERO);
 
         let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
         assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
@@ -410,48 +413,23 @@ module pm_amm::prediction_market {
         // 1) Transfer APT from user to market's authority account (PRODUCTION READY)
         let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
         let market_authority_addr = signer::address_of(&market_signer);
-        pfs::transfer(user, m.apt_metadata, market_authority_addr, apt_amount);
+        pfs::transfer(user, m.apt_metadata, market_authority_addr, octa_amount);
         
-        // 3) Mint YES tokens (1:1 ratio)
-        let yes_tokens = fa::mint(&m.yes_mint_ref, apt_amount);
+        // 2) Calculate token amount: 100 octas = 1 token
+        let token_amount = octa_amount / 100;
+
+        // 3) Mint YES tokens 
+        let yes_tokens = fa::mint(&m.yes_mint_ref, token_amount);
         let user_yes_store = pfs::ensure_primary_store_exists(user_addr, m.yes_metadata);
         fa::deposit_with_ref(&m.yes_transfer_ref, user_yes_store, yes_tokens);
         
-        // 4) Mint NO tokens (1:1 ratio)  
-        let no_tokens = fa::mint(&m.no_mint_ref, apt_amount);
+        // 4) Mint NO tokens  
+        let no_tokens = fa::mint(&m.no_mint_ref, token_amount);
         let user_no_store = pfs::ensure_primary_store_exists(user_addr, m.no_metadata);
         fa::deposit_with_ref(&m.no_transfer_ref, user_no_store, no_tokens);
     }
 
-    /// Redeem winning tokens for APT after market resolution
-    public fun redeem_winning_tokens<YesToken, NoToken>(
-        holder: &signer, market_addr: address, token_amount: u64
-    ) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
-        assert!(token_amount > 0, E_ZERO);
-
-        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
-        assert!(m.resolved, E_MARKET_NOT_RESOLVED);
-        
-        let holder_addr = signer::address_of(holder);
-        let winning_outcome = *option::borrow(&m.outcome_yes);
-        
-        if (winning_outcome) {
-            // YES won - redeem YES tokens for APT
-            let holder_yes_store = pfs::primary_store(holder_addr, m.yes_metadata);
-            let yes_tokens = fa::withdraw(holder, holder_yes_store, token_amount);
-            fa::burn(&m.yes_burn_ref, yes_tokens);
-        } else {
-            // NO won - redeem NO tokens for APT  
-            let holder_no_store = pfs::primary_store(holder_addr, m.no_metadata);
-            let no_tokens = fa::withdraw(holder, holder_no_store, token_amount);
-            fa::burn(&m.no_burn_ref, no_tokens);
-        };
-        
-        // Pay out APT 1:1 for winning tokens (PRODUCTION READY)
-        let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
-        pfs::transfer(&market_signer, m.apt_metadata, holder_addr, token_amount);
-    }  
+     
 
     // ===== View Functions =====
     
@@ -701,6 +679,10 @@ module pm_amm::prediction_market {
         let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
         assert!(lp_to_burn > 0, E_ZERO);
 
+         // For dynamic pools, restrict liquidity removal until market is resolved
+        if (pool_state::is_dynamic(&m.pool)) {
+            assert!(m.resolved, E_DYNAMIC_LP_REMOVAL_BEFORE_RESOLUTION);
+        };
 
         // Process automatic withdrawals for dynamic pools first
         if (pool_state::is_dynamic(&m.pool)) {
@@ -781,4 +763,106 @@ module pm_amm::prediction_market {
             fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_out);
         };
     }
+
+    /// Check if trading can begin for dynamic pool 
+    public fun can_start_trading<YesToken, NoToken>(market_addr: address): bool acquires PredictionMarket {
+        if (!exists<PredictionMarket<YesToken, NoToken>>(market_addr)) {
+            return false
+        };
+        
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        // Only applies to dynamic pools
+        if (!pool_state::is_dynamic(&m.pool)) {
+            return true // Static pools can always trade
+        };
+        
+        // Check if liquidity period has ended
+        if (option::is_some(&m.liquidity_period_ends_at)) {
+            let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+            timestamp::now_seconds() > liquidity_deadline
+        } else {
+            true // No liquidity period set
+        }
+    }
+
+    /// Get liquidity period end time for dynamic pools
+    public fun get_liquidity_period_end<YesToken, NoToken>(market_addr: address): Option<u64> acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        m.liquidity_period_ends_at
+    }
+
+
+    /// Complete position settlement after market resolution 
+    public fun settle_tokens_with_collateral<YesToken, NoToken>(
+        holder: &signer, market_addr: address, yes_amount: u64, no_amount: u64
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(yes_amount > 0 || no_amount > 0, E_ZERO);
+        
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(m.resolved, E_MARKET_NOT_RESOLVED);
+        
+        let holder_addr = signer::address_of(holder);
+        let winning_outcome = *option::borrow(&m.outcome_yes);
+        
+        // Withdraw ALL tokens user wants to settle
+        let holder_yes_store = pfs::primary_store(holder_addr, m.yes_metadata);
+        let holder_no_store = pfs::primary_store(holder_addr, m.no_metadata);
+        
+        let yes_tokens = if (yes_amount > 0) {
+            fa::withdraw(holder, holder_yes_store, yes_amount)
+        } else {
+            fa::zero(m.yes_metadata)
+        };
+        let no_tokens = if (no_amount > 0) {
+            fa::withdraw(holder, holder_no_store, no_amount)
+        } else {
+            fa::zero(m.no_metadata)
+        };
+        
+        // Calculate payout: only winning tokens have value (1 token = 100 octas)
+        let winning_token_count = if (winning_outcome) { yes_amount } else { no_amount };
+        let octa_payout = winning_token_count * 100;
+        
+        // Burn ALL tokens (winners + losers) for complete position settlement
+        fa::burn(&m.yes_burn_ref, yes_tokens);
+        fa::burn(&m.no_burn_ref, no_tokens);
+        
+        // Pay out APT collateral for winning tokens only
+        if (octa_payout > 0) {
+            let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
+            pfs::transfer(&market_signer, m.apt_metadata, holder_addr, octa_payout);
+        };
+    }
+
+    // ===== Resolution =====
+    public fun resolve_market<YesToken, NoToken>(
+        resolver: &signer, market_addr: address, outcome_yes: bool
+    ) acquires PredictionMarket, MarketRegistry {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+
+        let raddr = signer::address_of(resolver);
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() >= m.expires_at, E_MARKET_NOT_EXPIRED);
+        assert!(raddr == m.creator, E_NOT_AUTHORIZED); // V1: only creator can resolve
+
+        m.resolved = true;
+        m.resolved_at = option::some(timestamp::now_seconds());
+        m.outcome_yes = option::some(outcome_yes);
+
+        event::emit_event(&mut m.ev_resolve, ResolutionEvent {
+            market_id: m.market_id, resolver: raddr, outcome_yes, timestamp: timestamp::now_seconds(),
+        });
+
+        let reg = borrow_global_mut<MarketRegistry>(m.creator);
+        reg.total_markets_resolved = reg.total_markets_resolved + 1;
+
+        // move id from active -> resolved if you maintain that list (optional; omitted for brevity)
+    }
+
+
 }
