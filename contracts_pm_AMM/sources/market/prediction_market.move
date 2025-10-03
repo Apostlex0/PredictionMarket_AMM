@@ -623,4 +623,73 @@ module pm_amm::prediction_market {
             timestamp: timestamp::now_seconds(),
         });
     }
+
+    /// Add liquidity and mint LP tokens
+    /// Adds liquidity to prediction market using desired value increase
+    /// The pool math will calculate optimal token amounts based on current price and PM-AMM invariant
+    public fun add_liquidity<YesToken, NoToken>(
+        provider: &signer, 
+        market_addr: address, 
+        desired_value_increase: FixedPoint128
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(fixed_point::greater_than(&desired_value_increase, &fixed_point::zero()), E_ZERO);
+        let who = signer::address_of(provider);
+
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        // For dynamic pools, restrict liquidity addition after liquidity period ends
+        if (pool_state::is_dynamic(&m.pool)) {
+            // Check if liquidity period has ended
+            if (option::is_some(&m.liquidity_period_ends_at)) {
+                let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+                assert!(timestamp::now_seconds() <= liquidity_deadline, E_LIQUIDITY_PERIOD_ENDED);
+            };
+        };
+
+        // Get current price for liquidity calculation
+        let current_price = pool_state::get_spot_price_direct(&mut m.pool);
+        
+        // Run pool math to determine required token amounts
+        let outcome = pool_state::add_liquidity_direct(&mut m.pool, &desired_value_increase, &current_price);
+        let required_x = pool_state::get_actual_x(&outcome);
+        let required_y = pool_state::get_actual_y(&outcome);
+        let minted_lp = pool_state::get_minted_lp(&outcome);
+
+        // Pull exact required tokens from provider
+        let provider_yes_store = pfs::primary_store(who, m.yes_metadata);
+        let provider_no_store = pfs::primary_store(who, m.no_metadata);
+        
+        let yes_tokens = if (required_x > 0) { 
+            fa::withdraw(provider, provider_yes_store, required_x) 
+        } else { 
+            fa::zero(m.yes_metadata) 
+        };
+        let no_tokens = if (required_y > 0) { 
+            fa::withdraw(provider, provider_no_store, required_y) 
+        } else { 
+            fa::zero(m.no_metadata) 
+        };
+
+        // Deposit tokens to reserves 
+        fa::deposit_with_ref(&m.yes_transfer_ref, m.yes_reserve, yes_tokens);
+        fa::deposit_with_ref(&m.no_transfer_ref, m.no_reserve, no_tokens);
+
+        // Mint LP tokens to provider
+        let lp_tokens = fa::mint(&m.lp_mint_ref, (minted_lp as u64));
+        let provider_lp_store = pfs::ensure_primary_store_exists(who, m.lp_metadata);
+        fa::deposit_with_ref(&m.lp_transfer_ref, provider_lp_store, lp_tokens);
+
+        // Update LP accounting
+        let acc = load_lp_acc(&mut m.lp_accounts, who);
+        acc.lp_balance = acc.lp_balance + minted_lp;
+        // Note: Pool already updated its lp_token_supply, no need to duplicate tracking
+        // No fee index tracking needed - fees distributed via FA vaults
+    }
+    
+   
+
+
 }
