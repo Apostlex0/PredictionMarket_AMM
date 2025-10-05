@@ -19,6 +19,7 @@ module pm_amm::fixed_point {
     // Bounds
     const MAX_U128: u128 = 340282366920938463463374607431768211455;
     const MAX_SAFE_INT: u128 = 9223372036854775807; // 2^63 - 1
+    const MAX_U64: u64 = 18446744073709551615;
 
     // Error codes
     const E_OVERFLOW: u64 = 1;
@@ -35,14 +36,21 @@ module pm_amm::fixed_point {
     public fun from_u64(val: u64): FixedPoint128 {
         FixedPoint128 { value: (val as u128) * SCALE }
     }
+
     public fun from_u128(val: u128): FixedPoint128 {
         assert!(val <= MAX_SAFE_INT, error::invalid_argument(E_OVERFLOW));
         FixedPoint128 { value: val * SCALE }
     }
-    public fun from_raw(val: u128): FixedPoint128 { FixedPoint128 { value: val } }
+
+    public fun from_raw(val: u128): FixedPoint128 {
+        FixedPoint128 { value: val }
+    }
+
+    // (num/den) in fixed-point using safe 256-bit intermediate
     public fun from_fraction(numerator: u64, denominator: u64): FixedPoint128 {
         assert!(denominator != 0, error::invalid_argument(E_DIVISION_BY_ZERO));
-        FixedPoint128 { value: ((numerator as u128) * SCALE) / (denominator as u128) }
+        let result = mul_div((numerator as u128), SCALE, (denominator as u128));
+        FixedPoint128 { value: result }
     }
 
     // ===== Common constants =====
@@ -64,85 +72,93 @@ module pm_amm::fixed_point {
     public fun greater_than(a: &FixedPoint128, b: &FixedPoint128): bool { a.value > b.value }
     public fun greater_than_or_equal(a: &FixedPoint128, b: &FixedPoint128): bool { a.value >= b.value }
 
-    public fun min(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
-        if (a.value < b.value) { FixedPoint128 { value: a.value } } else { FixedPoint128 { value: b.value } }
-    }
-    public fun max(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
-        if (a.value > b.value) { FixedPoint128 { value: a.value } } else { FixedPoint128 { value: b.value } }
-    }
-
-    // ===== Arithmetic =====
-    public fun add(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
+        public fun add(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
         let sum = a.value + b.value;
         assert!(sum >= a.value, error::invalid_argument(E_OVERFLOW));
         FixedPoint128 { value: sum }
     }
+
     public fun sub(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
-        assert!(a.value >= b.value, error::invalid_argument(E_UNDERFLOW));
-        FixedPoint128 { value: a.value - b.value }
+        // assert!(a.value >= b.value, error::invalid_argument(E_UNDERFLOW));
+        if (a.value < b.value){
+            FixedPoint128 { value: b.value - a.value }
+        }else{FixedPoint128 { value: a.value - b.value }}
     }
 
-    /// NOTE[MATH]: this split multiply is approximate (ignores high_high and exact cross-term scaling).
-    /// Kept as-is per your request; consider u256 intermediates or math128::mul_div for exactness.
+    public fun min(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
+        if (a.value < b.value) { FixedPoint128 { value: a.value } }
+        else { FixedPoint128 { value: b.value } }
+    }
+
+    public fun max(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
+        if (a.value > b.value) { FixedPoint128 { value: a.value } }
+        else { FixedPoint128 { value: b.value } }
+    }
+
+    // ===== CORE ARITHMETIC =====
+
+    // (a * b) / SCALE with 256-bit intermediate
     public fun mul(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
-        let a_high = a.value >> 64u8;
-        let a_low  = a.value & ((1u128 << 64u8) - 1u128);
-        let b_high = b.value >> 64u8;
-        let b_low  = b.value & ((1u128 << 64u8) - 1u128);
+        let val_a_256 = (a.value as u256);
+        let val_b_256 = (b.value as u256);
+        let scale_256 = (SCALE as u256);
 
-        assert!(a_high == 0 || b_high == 0, error::invalid_argument(E_OVERFLOW));
+        let product_256 = val_a_256 * val_b_256;
+        let result_256 = product_256 / scale_256;
 
-        let low_low  = a_low * b_low;
-        let low_high = a_low * b_high;
-        let high_low = a_high * b_low;
-
-        let result = (low_low / SCALE) + low_high + high_low;
-        FixedPoint128 { value: result }
+        // downcast guard
+        assert!(result_256 <= (MAX_U128 as u256), error::invalid_argument(E_OVERFLOW));
+        FixedPoint128 { value: (result_256 as u128) }
     }
 
+    // (a * SCALE) / b with 256-bit intermediate
     public fun div(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
         assert!(b.value != 0, error::invalid_argument(E_DIVISION_BY_ZERO));
-        if (a.value < (MAX_U128 / SCALE)) {
-            FixedPoint128 { value: (a.value * SCALE) / b.value }
-        } else {
-            let quotient = a.value / b.value;
-            let remainder = a.value % b.value;
-            let fractional = (remainder * SCALE) / b.value;
-            FixedPoint128 { value: (quotient * SCALE) + fractional }
-        }
+
+        let val_a_256 = (a.value as u256);
+        let val_b_256 = (b.value as u256);
+        let scale_256 = (SCALE as u256);
+
+        let num_256 = val_a_256 * scale_256;
+        let result_256 = num_256 / val_b_256;
+
+        // downcast guard
+        assert!(result_256 <= (MAX_U128 as u256), error::invalid_argument(E_OVERFLOW));
+        FixedPoint128 { value: (result_256 as u128) }
     }
 
-    // / Fixed-point sqrt via binary search: find res s.t. (res^2)/SCALE ≈ a
+    // Generic helper used by from_fraction and elsewhere: floor((a*b)/den)
+    public fun mul_div(a: u128, b: u128, denominator: u128): u128 {
+        assert!(denominator > 0, error::invalid_argument(E_DIVISION_BY_ZERO));
+
+        let a256 = (a as u256);
+        let b256 = (b as u256);
+        let d256 = (denominator as u256);
+
+        let q256 = (a256 * b256) / d256;
+
+        // downcast guard
+        assert!(q256 <= (MAX_U128 as u256), error::invalid_argument(E_OVERFLOW));
+        (q256 as u128)
+    }
+
+    /// Newton–Raphson sqrt on raw fixed-point 
     public fun sqrt(a: &FixedPoint128): FixedPoint128 {
-        if (a.value == 0u128) { return zero(); };
-
-        let lo = 0u128;
-        let hi = a.value;
-        let res = 0u128;
-        let target = a.value;
-
-        let lo_mut = lo;
-        let hi_mut = hi;
-        let res_mut = res;
-
-        while (lo_mut <= hi_mut) {
-            let mid = (lo_mut + hi_mut) / 2u128;
-
-            // guard overflow on mid*mid
-            if (mid != 0u128 && mid > (MAX_U128 / mid)) {
-                hi_mut = mid - 1u128;
-                continue
-            };
-
-            let mid_squared = (mid * mid) / SCALE;
-            if (mid_squared <= target) {
-                res_mut = mid;
-                lo_mut = mid + 1u128;
-            } else {
-                hi_mut = mid - 1u128;
-            }
+        if (a.value == 0u128) {
+            return FixedPoint128 { value: 0u128 };
         };
-        FixedPoint128 { value: res_mut }
+
+        let res = a.value;
+        let prev_res = 0u128;
+
+        while (res != prev_res) {
+            prev_res = res;
+            let res_fp = FixedPoint128 { value: res };
+            // x_{n+1} = (x_n + a / x_n) / 2
+            res = (res + div(a, &res_fp).value) / 2u128;
+        };
+
+        FixedPoint128 { value: res }
     }
 
     public fun reciprocal(a: &FixedPoint128): FixedPoint128 {
@@ -151,23 +167,34 @@ module pm_amm::fixed_point {
     }
 
     public fun abs_diff(a: &FixedPoint128, b: &FixedPoint128): FixedPoint128 {
-        if (a.value >= b.value) { FixedPoint128 { value: a.value - b.value } }
-        else { FixedPoint128 { value: b.value - a.value } }
+        if (a.value >= b.value) {
+            FixedPoint128 { value: a.value - b.value }
+        } else {
+            FixedPoint128 { value: b.value - a.value }
+        }
     }
 
     // ===== Rounding =====
     public fun round(a: &FixedPoint128): FixedPoint128 {
         let integer_part = (a.value / SCALE) * SCALE;
         let fractional = a.value % SCALE;
-        if (fractional >= HALF_SCALE) { FixedPoint128 { value: integer_part + SCALE } }
-        else { FixedPoint128 { value: integer_part } }
+        if (fractional >= HALF_SCALE) {
+            FixedPoint128 { value: integer_part + SCALE }
+        } else {
+            FixedPoint128 { value: integer_part }
+        }
     }
+
     public fun floor(a: &FixedPoint128): FixedPoint128 {
         FixedPoint128 { value: (a.value / SCALE) * SCALE }
     }
+
     public fun ceil(a: &FixedPoint128): FixedPoint128 {
         let integer_part = (a.value / SCALE) * SCALE;
-        if (a.value % SCALE == 0) { FixedPoint128 { value: integer_part } }
-        else { FixedPoint128 { value: integer_part + SCALE } }
+        if (a.value % SCALE == 0) {
+            FixedPoint128 { value: integer_part }
+        } else {
+            FixedPoint128 { value: integer_part + SCALE }
+        }
     }
 }
