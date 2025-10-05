@@ -11,6 +11,7 @@ module pm_amm::pool_state {
 
     friend pm_amm::dynamic_tracking;
     friend pm_amm::prediction_market;
+    friend pm_amm::pm_amm;
 
     // ===== Error Codes (keep your numbers) =====
     /// Pool not initialized
@@ -229,12 +230,7 @@ module pm_amm::pool_state {
 
     // ===== Price cache =====
     public fun get_cached_price<X, Y>(pool: &Pool<X, Y>): Option<FixedPoint128> {
-        if (option::is_some(&pool.cached_price_timestamp)) {
-            let cache_time = *option::borrow(&pool.cached_price_timestamp);
-            let now = timestamp::now_seconds();
-            if (now - cache_time <= 1) { return pool.cached_price }
-        };
-        option::none()
+        return pool.cached_price 
     }
     public fun update_price_cache<X, Y>(pool: &mut Pool<X, Y>, price: FixedPoint128) {
         pool.cached_price = option::some(price);
@@ -244,7 +240,6 @@ module pm_amm::pool_state {
     // ===== Helpers =====
 
     /// Calculate implied total value from desired token amounts at given price
-    /// This helps convert legacy (desired_x, desired_y) interface to PM-AMM value-based approach
     fun calculate_implied_value_from_tokens(
         desired_x: u64,
         desired_y: u64,
@@ -267,8 +262,29 @@ module pm_amm::pool_state {
         let current_price = *option::borrow(&pool.cached_price);
         
         let eff_L = get_effective_liquidity(pool);
-        // Calculate optimal reserves for current price and time-decayed liquidity
+        // Calculate optimal reserves for current price and time decayed liquidity
         invariant_amm::calculate_optimal_reserves(&current_price, &eff_L)
+    }
+
+    /// Quote without executing (same math as your original)
+    public(friend) fun get_swap_quote_friend<X, Y>(
+        owner: address, amount_in: u64, is_x_to_y: bool
+    ): (u64, FixedPoint128) acquires Pool {
+        let p = borrow_global<Pool<X, Y>>(owner);
+        // Use virtual reserves for consistent quoting
+        let (virtual_rx, virtual_ry) = get_virtual_reserves(p);
+        let fee_rate = get_fee_rate(p);
+        let eff_L = get_effective_liquidity(p);
+        let q = swap_math::quote(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate, is_x_to_y);
+        (swap_math::get_quote_output_amount(&q), swap_math::get_quote_price_impact(&q))
+    }
+
+    /// Spot with 1s cache (unchanged behavior)
+    public(friend) fun get_spot_price_friend<X, Y>(owner: address): FixedPoint128 acquires Pool {
+        let p = borrow_global_mut<Pool<X, Y>>(owner);
+        let cached = get_cached_price(p);
+        assert!(option::is_some(&cached), E_INVALID_POOL_PARAMS); // Should never be none after proper initialization
+        *option::borrow(&cached)
     }
 
     /// Get pool reserves (friend function)
@@ -304,7 +320,6 @@ module pm_amm::pool_state {
     /// Price updates happen in swap functions using post-swap virtual reserves
     public(friend) fun get_spot_price_direct<X, Y>(pool: &mut Pool<X, Y>): FixedPoint128 {
         let cached = get_cached_price(pool);
-        assert!(option::is_some(&cached), E_INVALID_POOL_PARAMS); // Should never be none after proper initialization
         *option::borrow(&cached)
     }
 
@@ -317,286 +332,7 @@ module pm_amm::pool_state {
     public fun publish_pool<X, Y>(owner: &signer, pool: Pool<X, Y>) { move_to(owner, pool) }
     public fun pool_exists<X, Y>(owner: address): bool { exists<Pool<X, Y>>(owner) }
 
-    // ===================== SWAP EXECs (friend) =====================
-    
-    public(friend) fun exec_swap_x_to_y<X, Y>(
-        owner: address, amount_in: u64, min_out: u64
-    ): swap_engine::SwapResult acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-        assert!(!is_expired(p), 603);
 
-        // 1. Get pre-swap virtual reserves for pricing
-        let (virtual_rx, virtual_ry) = get_virtual_reserves(p);
-        let fee_rate = get_fee_rate(p);
-        let eff_L = get_effective_liquidity(p);
-
-        // 2. Calculate swap using virtual reserves
-        let out = swap_math::exec_x_to_y(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate);
-        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
-
-        // 3. Update actual reserves for token movements
-        let (actual_rx, actual_ry) = get_reserves(p);
-        let fee_amount = swap_math::get_fee_amount(&out);
-        let output_amount = swap_math::get_output_amount(&out);
-        let input_after_fee = amount_in - fee_amount;
-        
-        let new_actual_rx = actual_rx + input_after_fee;
-        let new_actual_ry = actual_ry - output_amount;
-        
-        update_reserves(p, new_actual_rx, new_actual_ry, (amount_in as u128), 0);
-        add_fees(p, fee_amount, 0);
-        
-        // 4. Calculate and cache new price using post-swap virtual reserves
-        let virtual_rx_after = virtual_rx + input_after_fee;
-        let virtual_ry_after = virtual_ry - output_amount;
-        let new_price = swap_math::spot_price(virtual_rx_after, virtual_ry_after, &eff_L);
-        update_price_cache(p, new_price);
-
-        swap_engine::mk_result(
-            amount_in,
-            output_amount,
-            fee_amount,
-            new_actual_rx,
-            new_actual_ry,
-            swap_math::get_price_impact(&out),
-        )
-    }
-
-    /// Y->X swap
-    public(friend) fun exec_swap_y_to_x<X, Y>(
-        owner: address, amount_in: u64, min_out: u64
-    ): swap_engine::SwapResult acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-        assert!(!is_expired(p), 603);
-
-        // 1. Get pre-swap virtual reserves for pricing
-        let (virtual_rx, virtual_ry) = get_virtual_reserves(p);
-        let fee_rate = get_fee_rate(p);
-        let eff_L = get_effective_liquidity(p);
-
-        // 2. Calculate swap using virtual reserves
-        let out = swap_math::exec_y_to_x(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate);
-        assert!(swap_math::get_output_amount(&out) >= min_out, 602);
-
-        // 3. Update actual reserves for token movements
-        let (actual_rx, actual_ry) = get_reserves(p);
-        let fee_amount = swap_math::get_fee_amount(&out);
-        let output_amount = swap_math::get_output_amount(&out);
-        let input_after_fee = amount_in - fee_amount;
-        
-        let new_actual_rx = actual_rx - output_amount;
-        let new_actual_ry = actual_ry + input_after_fee;
-
-        update_reserves(p, new_actual_rx, new_actual_ry, 0, (amount_in as u128));
-        add_fees(p, 0, fee_amount);
-        
-        // 4. Calculate and cache new price using post-swap virtual reserves
-        let virtual_rx_after = virtual_rx - output_amount;
-        let virtual_ry_after = virtual_ry + input_after_fee;
-        let new_price = swap_math::spot_price(virtual_rx_after, virtual_ry_after, &eff_L);
-        update_price_cache(p, new_price);
-
-        swap_engine::mk_result(
-            amount_in,
-            output_amount,
-            fee_amount,
-            new_actual_rx,
-            new_actual_ry,
-            swap_math::get_price_impact(&out),
-        )
-    }
-
-    /// Quote without executing (same math as your original)
-    public(friend) fun get_swap_quote_friend<X, Y>(
-        owner: address, amount_in: u64, is_x_to_y: bool
-    ): (u64, FixedPoint128) acquires Pool {
-        let p = borrow_global<Pool<X, Y>>(owner);
-        // Use virtual reserves for consistent quoting
-        let (virtual_rx, virtual_ry) = get_virtual_reserves(p);
-        let fee_rate = get_fee_rate(p);
-        let eff_L = get_effective_liquidity(p);
-        let q = swap_math::quote(virtual_rx, virtual_ry, &eff_L, amount_in, fee_rate, is_x_to_y);
-        (swap_math::get_quote_output_amount(&q), swap_math::get_quote_price_impact(&q))
-    }
-
-    /// Spot with 1s cache 
-    public(friend) fun get_spot_price_friend<X, Y>(owner: address): FixedPoint128 acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-        let cached = get_cached_price(p);
-        assert!(option::is_some(&cached), E_INVALID_POOL_PARAMS); 
-        *option::borrow(&cached)
-    }
-
-        // ===================== LIQUIDITY EXECs (friend) =====================
-
-    /// Add liquidity using PM-AMM math (maintains legacy interface for external callers)
-    public(friend) fun exec_add_liquidity_friend<X, Y>(
-        owner: address,
-        desired_x: u64,
-        desired_y: u64,
-        _min_x: u64,
-        _min_y: u64,
-    ): liquidity_manager::LiquidityResult acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-
-        assert!(!is_expired(p), LQ_E_POOL_EXPIRED);
-        assert!(desired_x > 0 && desired_y > 0, LQ_E_ZERO_LIQUIDITY);
-
-        let (reserve_x, reserve_y) = get_reserves(p);
-        let lp_supply = get_lp_supply(p);
-        let current_L = get_effective_liquidity(p);
-
-        let (actual_x, actual_y, lp_tokens, new_effective_L) = if (lp_supply == 0) {
-            let default_price = fixed_point::half(); 
-            let total_value = calculate_implied_value_from_tokens(desired_x, desired_y, &default_price);
-            let (required_x, required_y, lp_tokens, final_L) = 
-                liquidity_math::add_initial_liquidity_pm_amm(&default_price, &total_value);
-            
-            // Update pool state for initial liquidity
-            update_reserves(p, required_x, required_y, 0, 0);
-            if (p.is_dynamic) {
-                p.initial_L = option::some(final_L);
-            } else {
-                p.liquidity_parameter_L = final_L;
-            };
-            
-            (required_x, required_y, lp_tokens, final_L)
-        } else {
-            // Additional liquidity: Use current market price and convert desired tokens to value
-            let current_price = swap_math::spot_price(reserve_x, reserve_y, &current_L);
-            let desired_value = calculate_implied_value_from_tokens(desired_x, desired_y, &current_price);
-            let (required_x, required_y, new_x, new_y, lp_tokens, new_effective_L) =
-                liquidity_math::add_liquidity_pm_amm(&desired_value, reserve_x, reserve_y, &current_L, lp_supply);
-            
-            // Update pool state for additional liquidity
-            update_reserves(p, new_x, new_y, 0, 0);
-            if (p.is_dynamic) {
-                // Update base L₀ to achieve new effective L
-                let now = timestamp::now_seconds();
-                let expiration = *option::borrow(&p.expiration_timestamp);
-                let total_duration = expiration - p.creation_timestamp;
-                let time_remaining = expiration - now;
-                let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
-                let sqrt_ratio = fixed_point::sqrt(&time_ratio);
-                let new_base_L = fixed_point::div(&new_effective_L, &sqrt_ratio);
-                p.initial_L = option::some(new_base_L);
-            } else {
-                p.liquidity_parameter_L = new_effective_L;
-            };
-            
-            (required_x, required_y, lp_tokens, new_effective_L)
-        };
-
-        mint_lp_tokens(p, lp_tokens);
-        liquidity_manager::mk_liquidity_result(actual_x, actual_y, lp_tokens, new_effective_L)
-    }
-
-    /// Remove liquidity using PM-AMM math (maintains legacy interface for external callers)
-    public(friend) fun exec_remove_liquidity_friend<X, Y>(
-        owner: address,
-        lp_tokens: u128,
-        _min_x: u64,
-        _min_y: u64,
-    ): liquidity_manager::RemoveLiquidityResult acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-
-        let lp_supply = get_lp_supply(p);
-        assert!(lp_tokens > 0 && lp_tokens <= lp_supply, LQ_E_INVALID_LP_AMOUNT);
-
-        let (reserve_x, reserve_y) = get_reserves(p);
-        let current_L = get_effective_liquidity(p);
-
-        // Use PM-AMM removal logic
-        let (withdraw_x, withdraw_y, new_x, new_y, new_effective_L) =
-            liquidity_math::remove_liquidity_pm_amm(lp_tokens, reserve_x, reserve_y, &current_L, lp_supply);
-
-        // Update pool state
-        update_reserves(p, new_x, new_y, 0, 0);
-        burn_lp_tokens(p, lp_tokens);
-        
-        // Update liquidity parameter correctly for dynamic pools
-        if (p.is_dynamic && !fixed_point::equal(&new_effective_L, &fixed_point::zero())) {
-            let now = timestamp::now_seconds();
-            let expiration = *option::borrow(&p.expiration_timestamp);
-            let total_duration = expiration - p.creation_timestamp;
-            let time_remaining = expiration - now;
-            let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
-            let sqrt_ratio = fixed_point::sqrt(&time_ratio);
-            let new_base_L = fixed_point::div(&new_effective_L, &sqrt_ratio);
-            p.initial_L = option::some(new_base_L);
-        } else if (!p.is_dynamic) {
-            p.liquidity_parameter_L = new_effective_L;
-        };
-
-        liquidity_manager::mk_remove_liquidity_result(withdraw_x, withdraw_y, lp_tokens, new_effective_L)
-    }
-
-    /// Remove liquidity and swap the other leg to single asset (identical flow)
-    /// - removal first (updates reserves),
-    /// - then perform swap on the post-removal reserves,
-    /// - final assert on min_output with E_INSUFFICIENT_LIQUIDITY (700), as in your code.
-    public(friend) fun exec_remove_liquidity_single_asset_friend<X, Y>(
-        owner: address,
-        lp_tokens: u128,
-        prefer_x: bool,
-        min_output: u64,
-    ): u64 acquires Pool {
-        let p = borrow_global_mut<Pool<X, Y>>(owner);
-
-        // 1) remove proportionally (this updates reserves & burns LP)
-        let lp_supply = get_lp_supply(p);
-        assert!(lp_tokens > 0 && lp_tokens <= lp_supply, LQ_E_INVALID_LP_AMOUNT);
-
-        let (reserve_x, reserve_y) = get_reserves(p);
-        let current_L = get_effective_liquidity(p);
-
-        // Use PM-AMM removal logic
-        let (amount_x, amount_y, new_x, new_y, new_effective_L) =
-            liquidity_math::remove_liquidity_pm_amm(lp_tokens, reserve_x, reserve_y, &current_L, lp_supply);
-
-        update_reserves(p, new_x, new_y, 0, 0);
-        burn_lp_tokens(p, lp_tokens);
-        
-        // CRITICAL: Update L parameter after liquidity removal
-        if (p.is_dynamic && !fixed_point::equal(&new_effective_L, &fixed_point::zero())) {
-            let now = timestamp::now_seconds();
-            let expiration = *option::borrow(&p.expiration_timestamp);
-            let total_duration = expiration - p.creation_timestamp;
-            let time_remaining = expiration - now;
-            let time_ratio = fixed_point::from_fraction(time_remaining, total_duration);
-            let sqrt_ratio = fixed_point::sqrt(&time_ratio);
-            let new_base_L = fixed_point::div(&new_effective_L, &sqrt_ratio);
-            p.initial_L = option::some(new_base_L);
-        } else if (!p.is_dynamic) {
-            p.liquidity_parameter_L = new_effective_L;
-        };
-
-        // 2) swap the other leg on updated reserves (no slippage guard here; matches your 0-min swap)
-        let fee_rate = get_fee_rate(p);
-        let eff_L_2 = get_effective_liquidity(p);
-
-        if (prefer_x) {
-            // swap Y->X using post-removal reserves
-            let out = swap_math::exec_y_to_x(new_x, new_y, &eff_L_2, amount_y, fee_rate);
-            // apply state from the swap
-            update_reserves(p, swap_math::get_new_reserve_x(&out), swap_math::get_new_reserve_y(&out), 0, (amount_y as u128));
-            add_fees(p, 0, swap_math::get_fee_amount(&out));
-
-            let total_x = amount_x + swap_math::get_output_amount(&out);
-            assert!(total_x >= min_output, LQ_E_INSUFFICIENT_LIQUIDITY);
-            total_x
-        } else {
-            // prefer Y: swap X->Y
-            let out = swap_math::exec_x_to_y(new_x, new_y, &eff_L_2, amount_x, fee_rate);
-            update_reserves(p, swap_math::get_new_reserve_x(&out), swap_math::get_new_reserve_y(&out), (amount_x as u128), 0);
-            add_fees(p, swap_math::get_fee_amount(&out), 0);
-
-            let total_y = amount_y + swap_math::get_output_amount(&out);
-            assert!(total_y >= min_output, LQ_E_INSUFFICIENT_LIQUIDITY);
-            total_y
-        }
-        
-    }
 
     // ===== Direct Pool Reference Functions (for prediction market) =====
     
@@ -734,6 +470,7 @@ module pm_amm::pool_state {
                 desired_value_increase
             );
             update_reserves(pool, ax, ay, 0, 0);
+            update_price_cache(pool, *target_price);
             
             // For initial liquidity, set the base L parameter
             if (pool.is_dynamic) {
@@ -752,6 +489,7 @@ module pm_amm::pool_state {
                 liquidity_math::add_liquidity_pm_amm(desired_value_increase, rx, ry, &current_effective_L, lp_supply);
             
             update_reserves(pool, nx, ny, 0, 0);
+            update_price_cache(pool, *target_price);
             
             // CRITICAL: For dynamic pools, we need to update L₀, not effective L
             if (pool.is_dynamic) {
@@ -809,7 +547,7 @@ module pm_amm::pool_state {
         (withdraw_x, withdraw_y)
     }
 
-    // ===== optional view helper mirroring your old API =====
+
     public(friend) fun calculate_lp_value_friend<X, Y>(
         owner: address, lp_tokens: u128
     ): u64 acquires Pool {
@@ -837,28 +575,27 @@ module pm_amm::pool_state {
         let (reserve_x, reserve_y) = get_reserves(pool);
         let lp_supply = get_lp_supply(pool);
         let current_base_L0 = *option::borrow(&pool.initial_L);
-        
-        // Get current price (should be same as initial)
-        let current_price = swap_math::spot_price(reserve_x, reserve_y, &current_base_L0);
-        
-        // Calculate current pool value: V = L × φ(Φ⁻¹(P))
-        let current_pool_value = liquidity_math::calculate_current_pool_value(
-            reserve_x, reserve_y, &current_base_L0
+
+        // CRITICAL: Pre-trade liquidity additions should maintain current reserve ratios
+        // Calculate proportional increase based on value contribution ratio
+        let current_pool_value = fixed_point::add(
+            &fixed_point::from_u64(reserve_x),
+            &fixed_point::from_u64(reserve_y)
         );
-        
-        // Calculate new total value
+
+        // Calculate increase ratio: (current_value + contribution) / current_value
         let new_total_value = fixed_point::add(&current_pool_value, lp_value_contribution);
-        
-        // Calculate new L₀ to achieve new value at SAME price: L_new = V_new / φ(Φ⁻¹(P))
-        let new_base_L0 = invariant_amm::calculate_liquidity_from_pool_value(
-            &current_price, &new_total_value
-        );
-        
-        // Calculate new optimal reserves at this price with new L
-        let (new_reserve_x, new_reserve_y) = invariant_amm::calculate_optimal_reserves(
-            &current_price, &new_base_L0
-        );
-        
+        let increase_ratio = fixed_point::div(&new_total_value, &current_pool_value);
+
+        // Increase reserves proportionally
+        let new_reserve_x_fp = fixed_point::mul(&fixed_point::from_u64(reserve_x), &increase_ratio);
+        let new_reserve_y_fp = fixed_point::mul(&fixed_point::from_u64(reserve_y), &increase_ratio);
+        let new_reserve_x = fixed_point::to_u64(&new_reserve_x_fp);
+        let new_reserve_y = fixed_point::to_u64(&new_reserve_y_fp);
+
+        // Increase L proportionally
+        let new_base_L0 = fixed_point::mul(&current_base_L0, &increase_ratio);
+
         // Required additional tokens
         let required_x = new_reserve_x - reserve_x;
         let required_y = new_reserve_y - reserve_y;
@@ -871,6 +608,9 @@ module pm_amm::pool_state {
         // Update pool state - CRITICAL: Only update base L₀, not effective L
         pool.initial_L = option::some(new_base_L0);
         update_reserves(pool, new_reserve_x, new_reserve_y, 0, 0);
+        // Recalculate price after reserve update
+        let updated_price = swap_math::spot_price(new_reserve_x, new_reserve_y, &new_base_L0);
+        update_price_cache(pool, updated_price);
         mint_lp_tokens(pool, lp_tokens);
         
         AddLiqOutcome {
