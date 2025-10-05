@@ -140,7 +140,7 @@ module pm_amm::prediction_market {
         yes_metadata: Object<fa::Metadata>,
         no_metadata: Object<fa::Metadata>,
         lp_metadata: Object<fa::Metadata>,
-        apt_metadata: Object<fa::Metadata>, // APT now uses FA framework (post-June 2025)
+        apt_metadata: Object<fa::Metadata>, 
         
         // ===== FA Management References =====
         yes_mint_ref: fa::MintRef,
@@ -155,8 +155,6 @@ module pm_amm::prediction_market {
         
         // ===== Market Authority =====
         market_signer_cap: account::SignerCapability, // For controlling market's APT
-        
-         //till here
 
         // ===== custodial FA vaults =====
         // Token reserves (pre-minted YES/NO tokens available for trading)
@@ -410,20 +408,20 @@ module pm_amm::prediction_market {
 
         let user_addr = signer::address_of(user);
         
-        // 1) Transfer APT from user to market's authority account (PRODUCTION READY)
+        //  Transfer APT from user to market's authority account (PRODUCTION READY)
         let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
         let market_authority_addr = signer::address_of(&market_signer);
         pfs::transfer(user, m.apt_metadata, market_authority_addr, octa_amount);
         
-        // 2) Calculate token amount: 100 octas = 1 token
-        let token_amount = octa_amount / 100;
+        
+        let token_amount = octa_amount ;
 
-        // 3) Mint YES tokens 
+        //  Mint YES tokens 
         let yes_tokens = fa::mint(&m.yes_mint_ref, token_amount);
         let user_yes_store = pfs::ensure_primary_store_exists(user_addr, m.yes_metadata);
         fa::deposit_with_ref(&m.yes_transfer_ref, user_yes_store, yes_tokens);
         
-        // 4) Mint NO tokens  
+        // Mint NO tokens  
         let no_tokens = fa::mint(&m.no_mint_ref, token_amount);
         let user_no_store = pfs::ensure_primary_store_exists(user_addr, m.no_metadata);
         fa::deposit_with_ref(&m.no_transfer_ref, user_no_store, no_tokens);
@@ -529,10 +527,9 @@ module pm_amm::prediction_market {
         let buyer_yes_store = pfs::ensure_primary_store_exists(buyer_addr, m.yes_metadata);
         fa::deposit_with_ref(&m.yes_transfer_ref, buyer_yes_store, yes_tokens);
         
-        // 7) Synchronize pool reserves with FA store balances (critical for consistency)
-        sync_pool_reserves_with_fa_stores(m);
         
-        // 8) Update stats and emit event
+        
+        // 7) Update stats and emit event
         m.total_volume = m.total_volume + (amount_in_no as u128);
         let new_price = pool_state::get_spot_price_direct(&mut m.pool);
         event::emit_event(&mut m.ev_trade, TradeEvent {
@@ -587,8 +584,7 @@ module pm_amm::prediction_market {
         let buyer_no_store = pfs::ensure_primary_store_exists(buyer_addr, m.no_metadata);
         fa::deposit_with_ref(&m.no_transfer_ref, buyer_no_store, no_tokens);
 
-        // Synchronize pool reserves with FA store balances (critical for consistency)
-        sync_pool_reserves_with_fa_stores(m);
+       
 
         // Update stats and emit event
         m.total_volume = m.total_volume + (amount_in_yes as u128);
@@ -667,6 +663,69 @@ module pm_amm::prediction_market {
         // No fee index tracking needed - fees distributed via FA vaults
     }
     
+
+    public fun add_pretrade_liquidity<YesToken, NoToken>(
+        provider: &signer, 
+        market_addr: address, 
+        lp_value_contribution: FixedPoint128
+    ) acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(fixed_point::greater_than(&lp_value_contribution, &fixed_point::zero()), E_ZERO);
+        
+        let who = signer::address_of(provider);
+        let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+        
+        // Basic market state validations
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+        
+        // Ensure this is a dynamic pool
+        assert!(pool_state::is_dynamic(&m.pool), E_NOT_DYNAMIC_POOL);
+        
+        // Check that we're still in the liquidity period (trading hasn't started)
+        let is_market_active = if (option::is_some(&m.liquidity_period_ends_at)) {
+            let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+            timestamp::now_seconds() > liquidity_deadline
+        } else {
+            false // No deadline set, market not active yet
+        };
+        assert!(!is_market_active, E_TRADING_ALREADY_STARTED);
+        
+        // Call the pool state function to calculate required tokens and update pool
+        let outcome = pool_state::add_pretrade_liquidity(&mut m.pool, &lp_value_contribution, is_market_active);
+        let required_x = pool_state::get_actual_x(&outcome);
+        let required_y = pool_state::get_actual_y(&outcome);
+        let minted_lp = pool_state::get_minted_lp(&outcome);
+
+        // Pull exact required tokens from provider
+        let provider_yes_store = pfs::primary_store(who, m.yes_metadata);
+        let provider_no_store = pfs::primary_store(who, m.no_metadata);
+
+        let yes_tokens = if (required_x > 0) { 
+            fa::withdraw(provider, provider_yes_store, required_x) 
+        } else { 
+            fa::zero(m.yes_metadata) 
+        };
+        let no_tokens = if (required_y > 0) { 
+            fa::withdraw(provider, provider_no_store, required_y) 
+        } else { 
+            fa::zero(m.no_metadata) 
+        };
+
+        // Deposit tokens to reserves (pool math already updated reserves, this syncs FA stores)
+        fa::deposit_with_ref(&m.yes_transfer_ref, m.yes_reserve, yes_tokens);
+        fa::deposit_with_ref(&m.no_transfer_ref, m.no_reserve, no_tokens);
+
+        // Mint LP tokens to provider
+        let lp_tokens = fa::mint(&m.lp_mint_ref, (minted_lp as u64));
+        let provider_lp_store = pfs::ensure_primary_store_exists(who, m.lp_metadata);
+        fa::deposit_with_ref(&m.lp_transfer_ref, provider_lp_store, lp_tokens);
+
+        // Update LP accounting
+        let acc = load_lp_acc(&mut m.lp_accounts, who);
+        acc.lp_balance = acc.lp_balance + minted_lp;
+        // Note: Pool already updated its lp_token_supply via pool_state::add_pretrade_liquidity
+    }
    
 
     /// Remove liquidity and burn LP tokens
@@ -824,7 +883,7 @@ module pm_amm::prediction_market {
         
         // Calculate payout: only winning tokens have value (1 token = 100 octas)
         let winning_token_count = if (winning_outcome) { yes_amount } else { no_amount };
-        let octa_payout = winning_token_count * 100;
+        let octa_payout = winning_token_count ;
         
         // Burn ALL tokens (winners + losers) for complete position settlement
         fa::burn(&m.yes_burn_ref, yes_tokens);
