@@ -246,9 +246,10 @@ The swapping mechanism allows traders to express their belief in an outcome by t
     6.  After the calculation, `prediction_market` updates its internal FA reserves and transfers the output tokens to the trader.
 
 *   **Mathematical Foundation:** Unlike constant-product AMMs where price is a simple ratio of reserves, the PM-AMM's price is a direct representation of probability, derived from the cumulative distribution function (CDF) of the normal distribution, denoted as $\Phi$. The price $P$ of the YES token (reserve $x$) is given by the marginal price formula :
-    $$P = \Phi\left(\frac{y - x}{L}\right)$$
 
-    This formula is implemented in the `invariant_amm::calculate_marginal_price` function. Here, $x$ and $y$ are the reserves of the YES and NO tokens, and $L$ is the pool's liquidity parameter. This ensures that the market price is always a valid probability between 0 and 1 and moves according to the principles of the underlying mathematical model.
+$$P = \Phi\left(\frac{y - x}{L}\right)$$
+
+This formula is implemented in the `invariant_amm::calculate_marginal_price` function. Here, $x$ and $y$ are the reserves of the YES and NO tokens, and $L$ is the pool's liquidity parameter. This ensures that the market price is always a valid probability between 0 and 1 and moves according to the principles of the underlying mathematical model.
 
 ### 2.3 Mint Token Set Infrastructure
 
@@ -277,9 +278,10 @@ Liquidity provision in the PM-AMM is fundamentally different from traditional AM
     6.  The protocol pulls these precise token amounts from the LP's wallet and mints new LP tokens in return.
 
 *   **Mathematical Foundation:** The relationship between the pool's value V(P), its price $P$, and its liquidity $L$ is defined as $V(P) = L \phi(\Phi^{-1}(P))$, where $\phi$ is the probability density function (PDF) of the normal distribution. To add liquidity at the current price, the protocol computes the required change in liquidity, $\Delta L$, from the user's desired value increase, $\Delta V(P)$, using the inverse relationship :
-    $$\Delta L = \frac{\Delta V(P)}{\phi(\Phi^{-1}(P))}$$
+
+$$\Delta L = \frac{\Delta V(P)}{\phi(\Phi^{-1}(P))}$$
     
-    This $\Delta L$ is then used with the `invariant_amm::calculate_optimal_reserves` function to determine the precise token deposits required. This elegant mechanism abstracts away the complexity for the LP, who only needs to decide on a single value to contribute.
+This $\Delta L$ is then used with the `invariant_amm::calculate_optimal_reserves` function to determine the precise token deposits required. This elegant mechanism abstracts away the complexity for the LP, who only needs to decide on a single value to contribute.
 
 ### 2.5 Remove Liquidity Infrastructure
 
