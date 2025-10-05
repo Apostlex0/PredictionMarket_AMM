@@ -305,6 +305,43 @@ public fun get_user_lp_position<YesToken, NoToken>(
     prediction_market::get_user_lp_position<YesToken, NoToken>(user_addr, market_addr)
 }
 
+    // ===== Admin Functions =====
+
+    /// Pause the protocol
+    public entry fun pause(admin: &signer) acquires ProtocolConfig {
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); // CHANGED: compiles, but see design note
+        assert!(signer::address_of(admin) == config.admin, E_UNAUTHORIZED);
+        config.is_paused = true;
+    }
+
+    /// Unpause the protocol
+    public entry fun unpause(admin: &signer) acquires ProtocolConfig {
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); // CHANGED: compiles, but see design note
+        assert!(signer::address_of(admin) == config.admin, E_UNAUTHORIZED);
+        config.is_paused = false;
+    }
+
+    /// Update protocol fee
+    public entry fun update_protocol_fee(
+        admin: &signer,
+        new_fee_rate: u16,
+    ) acquires ProtocolConfig {
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); // CHANGED: compiles, but see design note
+        assert!(signer::address_of(admin) == config.admin, E_UNAUTHORIZED);
+        assert!(new_fee_rate <= 1000, E_INVALID_PARAMETERS);
+        config.protocol_fee_rate = new_fee_rate;
+    }
+
+    /// Update fee recipient
+    public entry fun update_fee_recipient(
+        admin: &signer,
+        new_recipient: address,
+    ) acquires ProtocolConfig {
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); // CHANGED: compiles, but see design note
+        assert!(signer::address_of(admin) == config.admin, E_UNAUTHORIZED);
+        config.fee_recipient = new_recipient;
+    }
+
         // ===== Internal Functions =====
 
     fun assert_not_paused() acquires ProtocolConfig {
