@@ -5,7 +5,11 @@ module pm_amm::pm_amm {
     use std::vector; 
     use aptos_framework::timestamp;
 
-   
+    use pm_amm::fixed_point::{Self, FixedPoint128};
+    use pm_amm::pool_state::{Self};
+    use pm_amm::swap_engine::{Self};
+    use pm_amm::invariant_amm;
+    use pm_amm::prediction_market;
 
     // ===== Error Codes =====
     const E_NOT_INITIALIZED: u64 = 1100;
@@ -69,7 +73,87 @@ module pm_amm::pm_amm {
         });
 
         move_to(admin, PoolRegistry {
-            pools: vector::empty<PoolRecord>(), // CHANGED: supply type parameter
+            pools: vector::empty<PoolRecord>(), 
         });
+    }
+
+    /// Create a new prediction market
+    public entry fun create_prediction_market<YesToken, NoToken, Collateral>(
+        creator: &signer,
+        question: vector<u8>,
+        description: vector<u8>,
+        category: vector<u8>,
+        expires_in_seconds: u64,
+        initial_probability: u128, // Raw FixedPoint128
+        initial_liquidity: u128, // Changed to u128 for raw FixedPoint128
+        fee_rate: u16,
+        resolution_source: vector<u8>,
+        is_dynamic: bool,
+    ) acquires ProtocolConfig, PoolRegistry {
+        assert_not_paused();
+
+        let price = fixed_point::from_raw(initial_probability);
+        let expires_at = timestamp::now_seconds() + expires_in_seconds;
+
+        // Calculate initial reserves based on probability
+        // Convert initial_liquidity to total pool value for PM-AMM
+        let total_pool_value = fixed_point::from_raw(initial_liquidity); // Use from_raw for consistency
+
+        let _market_id = prediction_market::create_market<YesToken, NoToken, Collateral>(
+            creator,
+            string::utf8(question),
+            string::utf8(description),
+            string::utf8(category),
+            expires_at,
+            price,
+            total_pool_value,
+            fee_rate,
+            is_dynamic,
+        );
+
+        // Update protocol stats
+        // NOTE: This reads @pm_amm; see note below re: where ProtocolConfig is stored.
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); // CHANGED: compiles, but see design note
+        config.total_markets_created = config.total_markets_created + 1;
+
+        // Register as a pool
+        register_pool<YesToken, NoToken>(signer::address_of(creator), true);
+    }
+
+    // ===== Prediction Market View Functions =====
+
+#[view]
+public fun is_paused(): bool acquires ProtocolConfig {
+    if (!exists<ProtocolConfig>(@pm_amm)) { return true };
+    let config = borrow_global<ProtocolConfig>(@pm_amm);
+    config.is_paused
+}
+
+        // ===== Internal Functions =====
+
+    fun assert_not_paused() acquires ProtocolConfig {
+        assert!(!is_paused(), E_PAUSED);
+    }
+
+    fun register_pool<X, Y>(
+        pool_owner: address,
+        is_prediction_market: bool,
+    ) acquires ProtocolConfig, PoolRegistry {
+        let config = borrow_global_mut<ProtocolConfig>(@pm_amm); 
+        config.total_pools_created = config.total_pools_created + 1;
+
+        let registry = borrow_global_mut<PoolRegistry>(@pm_amm); 
+        vector::push_back(&mut registry.pools, PoolRecord {
+            pool_id: config.total_pools_created,
+            token_x_type: type_name<X>(),
+            token_y_type: type_name<Y>(),
+            creator: pool_owner,
+            is_prediction_market,
+            created_at: timestamp::now_seconds(),
+        });
+    }
+
+     fun type_name<T>(): String {
+        string::utf8(b"placeholder") 
     }
 }
