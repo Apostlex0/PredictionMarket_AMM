@@ -1,19 +1,14 @@
 // src/components/market-detail/MarketStats.tsx
 'use client';
 import { TrendingUp, Droplets, Users, Zap, Clock, DollarSign } from 'lucide-react';
-
-interface Market {
-  volume: number;
-  liquidity: number;
-  totalTraders: number;
-}
+import { Market } from '@/types/market';
 
 export default function MarketStats({ market }: { market: Market }) {
   const stats = [
     {
       icon: <TrendingUp className="w-5 h-5" />,
       label: '24h Volume',
-      value: `$${(market.volume / 1000).toFixed(1)}K`,
+      value: `$${(market.totalVolume / 1000).toFixed(1)}K`,
       change: '+12.5%',
       positive: true,
     },

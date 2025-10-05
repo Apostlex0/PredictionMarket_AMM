@@ -4,17 +4,7 @@ import Link from 'next/link';
 import { Clock, Users, TrendingUp, Droplets, Sparkles, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
-
-interface Market {
-  id: string;
-  question: string;
-  category: string;
-  probability: number;
-  volume: number;
-  liquidity: number;
-  expiresAt: Date;
-  totalTraders: number;
-}
+import { Market } from '@/types/market';
 
 export default function MarketCard({ market }: { market: Market }) {
   const formatCurrency = (value: number) => {
@@ -34,7 +24,7 @@ export default function MarketCard({ market }: { market: Market }) {
     return colors[category] || 'from-gray-400 to-slate-500';
   };
 
-  const probabilityPercentage = (market.probability * 100).toFixed(0);
+  const probabilityPercentage = market.probability.toFixed(0);
 
   return (
     <Link href={`/markets/${market.id}`}>
@@ -103,7 +93,7 @@ export default function MarketCard({ market }: { market: Market }) {
             <StatItem
               icon={<TrendingUp className="w-4 h-4" />}
               label="Volume"
-              value={formatCurrency(market.volume)}
+              value={formatCurrency(market.totalVolume)}
               color="text-emerald-400"
             />
             <StatItem

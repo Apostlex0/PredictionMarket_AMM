@@ -3,15 +3,7 @@
 import MarketChart from './MarketChart';
 import MarketStats from './MarketStats';
 import ActivityFeed from './ActivityFeed';
-
-interface Market {
-  id: string;
-  question: string;
-  probability: number;
-  volume: number;
-  liquidity: number;
-  totalTraders: number;
-}
+import { Market } from '@/types/market';
 
 export default function AnalyticsTab({ market }: { market: Market }) {
   return (

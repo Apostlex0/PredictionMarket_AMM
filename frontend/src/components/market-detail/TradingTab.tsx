@@ -4,15 +4,7 @@ import { useState } from 'react';
 import MintCompleteSet from './MintCompleteSet';
 import SwapInterface from './SwapInterface';
 import CurrentPosition from './CurrentPosition';
-
-interface Market {
-  id: string;
-  question: string;
-  probability: number;
-  yesTokenAddress: string;
-  noTokenAddress: string;
-  poolAddress: string;
-}
+import { Market } from '@/types/market';
 
 export default function TradingTab({ market }: { market: Market }) {
   const [activeView, setActiveView] = useState<'swap' | 'mint'>('swap');
@@ -54,7 +46,7 @@ export default function TradingTab({ market }: { market: Market }) {
 
       {/* Sidebar - Current Position */}
       <div className="lg:col-span-1">
-        <CurrentPosition marketId={market.id} />
+        <CurrentPosition market={market} />
       </div>
     </div>
   );

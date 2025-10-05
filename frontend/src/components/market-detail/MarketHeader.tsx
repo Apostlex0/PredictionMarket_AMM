@@ -4,22 +4,10 @@ import { Share2, ExternalLink, Clock, Users } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { CATEGORY_COLORS } from '@/lib/constants';
 import { formatCurrency, formatNumber } from '@/lib/format';
-
-interface Market {
-  id: string;
-  question: string;
-  description: string;
-  category: string;
-  probability: number;
-  volume: number;
-  liquidity: number;
-  expiresAt: Date;
-  totalTraders: number;
-  creator: string;
-}
+import { Market } from '@/types/market';
 
 export default function MarketHeader({ market }: { market: Market }) {
-  const probabilityPercent = (market.probability * 100).toFixed(1);
+  const probabilityPercent = market.probability.toFixed(1);
   const categoryColor = CATEGORY_COLORS[market.category] || 'from-gray-500 to-slate-500';
 
   return (
@@ -53,7 +41,7 @@ export default function MarketHeader({ market }: { market: Market }) {
         />
         <StatBox
           label="24h Volume"
-          value={formatCurrency(market.volume)}
+          value={formatCurrency(market.totalVolume)}
         />
         <StatBox
           label="Liquidity"

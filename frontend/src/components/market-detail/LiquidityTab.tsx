@@ -4,16 +4,7 @@ import { useState } from 'react';
 import AddLiquidityForm from './AddLiquidityForm';
 import RemoveLiquidityForm from './RemoveLiquidityForm';
 import LPPositionCard from './LPPositionCard';
-
-interface Market {
-    id: string;
-    question: string;
-    probability: number;
-    liquidity: number;
-    yesTokenAddress: string;
-    noTokenAddress: string;
-    poolAddress: string;
-}
+import { Market } from '@/types/market';
 
 export default function LiquidityTab({ market }: { market: Market }) {
     const [activeView, setActiveView] = useState<'add' | 'remove'>('add');
@@ -53,7 +44,7 @@ export default function LiquidityTab({ market }: { market: Market }) {
 
             {/* Sidebar - LP Position */}
             <div className="lg:col-span-1">
-                <LPPositionCard marketId={market.id} />
+                <LPPositionCard market={market} />
             </div>
         </div>
     );

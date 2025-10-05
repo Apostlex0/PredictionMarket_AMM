@@ -144,7 +144,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         <div className="text-sm text-gray-300">
                             <div className="font-semibold text-cyan-300 mb-1">PM-AMM Liquidity</div>
                             <div>
-                                Specify the USD value you want to add. Our PM-AMM will automatically calculate the optimal YES and NO token amounts based on current market conditions.
+                                Specify the octa value you want to add. Our PM-AMM will automatically calculate the optimal YES and NO token amounts based on current market conditions.
                             </div>
                         </div>
                     </div>
@@ -155,9 +155,8 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400 flex items-center space-x-2">
                             <DollarSign className="w-4 h-4" />
-                            <span>USD Value to Add</span>
+                            <span>Octa Value to Add</span>
                         </span>
-                        <span className="text-sm text-gray-400">Wallet: $0.00</span>
                     </div>
                     <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
                         <div className="flex items-center justify-between">
@@ -171,7 +170,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                                 step="0.01"
                             />
                             <div className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-bold text-sm">
-                                USD
+                                OCTA
                             </div>
                         </div>
                     </div>

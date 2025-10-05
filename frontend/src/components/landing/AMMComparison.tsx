@@ -141,7 +141,7 @@ export default function AMMComparison() {
                 backgroundSize: '200% 200%'
               }}
             >
-              Why pm-AMM?
+              Why Morpheus?
               <motion.div
                 className="absolute top-2 -right-12"
                 animate={{

@@ -1,11 +1,10 @@
 // components/CustomConnectButton.tsx
 'use client';
-import { WalletSelector } from "@aptos-labs/wallet-adapter-ant-design";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
-import { Wallet, CheckCircle } from 'lucide-react';
+import { CheckCircle, Wallet } from 'lucide-react';
 
 export function CustomConnectButton() {
-  const { connected, account } = useWallet();
+  const { connected, account, connect, wallets } = useWallet();
 
   if (connected && account) {
     return (
@@ -21,14 +20,24 @@ export function CustomConnectButton() {
   }
 
   return (
-    <div className="wallet-selector-wrapper">
-      <WalletSelector />
-    </div>
+    <button
+      onClick={() => {
+        if (wallets?.[0]) {
+          connect(wallets[0].name);
+        }
+      }}
+      className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl font-semibold transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-cyan-500/20"
+    >
+      <div className="flex items-center space-x-2">
+        <Wallet className="w-4 h-4" />
+        <span>Connect Wallet</span>
+      </div>
+    </button>
   );
 }
 
 export function MobileCustomConnectButton() {
-  const { connected, account } = useWallet();
+  const { connected, account, connect, wallets } = useWallet();
 
   if (connected && account) {
     return (
@@ -44,8 +53,18 @@ export function MobileCustomConnectButton() {
   }
 
   return (
-    <div className="wallet-selector-wrapper w-full">
-      <WalletSelector />
-    </div>
+    <button
+      onClick={() => {
+        if (wallets?.[0]) {
+          connect(wallets[0].name);
+        }
+      }}
+      className="w-full px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl font-semibold transition-all duration-300"
+    >
+      <div className="flex items-center justify-center space-x-2">
+        <Wallet className="w-4 h-4" />
+        <span>Connect Wallet</span>
+      </div>
+    </button>
   );
 }

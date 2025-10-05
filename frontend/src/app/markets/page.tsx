@@ -1,17 +1,24 @@
 // src/app/markets/page.tsx
 'use client';
-import { useState } from 'react';
-import { Search, Filter, TrendingUp, Clock, DollarSign, Sparkles, Zap, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, Filter, TrendingUp, Clock, DollarSign, Sparkles, Zap, Activity, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Navigation from '@/components/Navigation';
 import MarketCard from '@/components/markets/MarketCard';
 import MarketFilters from '@/components/markets/MarketFilters';
+import { getAllMarkets } from '@/lib/aptos_service';
+import { Market, MarketSortBy } from '@/types/market';
 
 export default function MarketsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [sortBy, setSortBy] = useState<'volume' | 'liquidity' | 'ending-soon' | 'newest'>('volume');
+  const [sortBy, setSortBy] = useState<MarketSortBy>('volume');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
+  
+  // Market data state
+  const [allMarkets, setAllMarkets] = useState<Market[]>([]);
+  const [isLoadingRealMarkets, setIsLoadingRealMarkets] = useState(true);
+  const [realMarketsError, setRealMarketsError] = useState<string | null>(null);
 
   const sortOptions = [
     { id: 'volume', label: 'Highest Volume', icon: '📈', description: 'Sort by trading volume' },
@@ -22,69 +29,202 @@ export default function MarketsPage() {
 
   const selectedSortOption = sortOptions.find(option => option.id === sortBy) || sortOptions[0];
 
-  // Mock data - will be replaced with actual contract data
-  const mockMarkets = [
+  // Mock markets for presentation (always shown as filler)
+  const getMockMarkets = (): Market[] => [
     {
-      id: '1',
+      id: 'mock-1',
       question: 'Will Bitcoin reach $100,000 by end of 2024?',
+      description: 'Demo market for presentation purposes',
       category: 'crypto',
-      probability: 0.67,
-      volume: 234567,
+      probability: 67,
+      totalVolume: 234567,
       liquidity: 45678,
       expiresAt: new Date('2024-12-31'),
+      createdAt: new Date('2024-01-01'),
       totalTraders: 1234,
+      resolved: false,
+      creator: '0x742d...8f9a',
+      isDynamic: false,
+      feeRate: 30,
+      initialProbability: 50,
+      yesTokenAddress: '0x1234...5678',
+      noTokenAddress: '0x8765...4321',
+      lpTokenAddress: '0xabcd...efgh',
+      poolAddress: '0xabcd...efgh',
+      marketAuthority: '0x742d...8f9a',
     },
     {
-      id: '2',
+      id: 'mock-2',
       question: 'Will AI achieve AGI before 2030?',
+      description: 'Demo market for presentation purposes',
       category: 'technology',
-      probability: 0.23,
-      volume: 567890,
+      probability: 23,
+      totalVolume: 567890,
       liquidity: 123456,
       expiresAt: new Date('2030-01-01'),
+      createdAt: new Date('2024-02-15'),
       totalTraders: 3456,
+      resolved: false,
+      creator: '0x123a...4b5c',
+      isDynamic: true,
+      feeRate: 30,
+      initialProbability: 25,
+      yesTokenAddress: '0x2345...6789',
+      noTokenAddress: '0x9876...5432',
+      lpTokenAddress: '0xbcde...fghi',
+      poolAddress: '0xbcde...fghi',
+      marketAuthority: '0x123a...4b5c',
     },
     {
-      id: '3',
+      id: 'mock-3',
       question: 'Will Ethereum surpass Bitcoin in market cap?',
+      description: 'Demo market for presentation purposes',
       category: 'crypto',
-      probability: 0.15,
-      volume: 123456,
+      probability: 15,
+      totalVolume: 123456,
       liquidity: 34567,
       expiresAt: new Date('2025-06-30'),
+      createdAt: new Date('2024-03-10'),
       totalTraders: 892,
+      resolved: false,
+      creator: '0x456d...7e8f',
+      isDynamic: false,
+      feeRate: 30,
+      initialProbability: 20,
+      yesTokenAddress: '0x3456...7890',
+      noTokenAddress: '0x0987...6543',
+      lpTokenAddress: '0xcdef...ghij',
+      poolAddress: '0xcdef...ghij',
+      marketAuthority: '0x456d...7e8f',
     },
     {
-      id: '4',
+      id: 'mock-4',
       question: 'Will Manchester City win the Premier League 2024-25?',
+      description: 'Demo market for presentation purposes',
       category: 'sports',
-      probability: 0.45,
-      volume: 89234,
+      probability: 45,
+      totalVolume: 89234,
       liquidity: 23456,
       expiresAt: new Date('2025-05-25'),
+      createdAt: new Date('2024-08-15'),
       totalTraders: 567,
+      resolved: false,
+      creator: '0x789g...0h1i',
+      isDynamic: true,
+      feeRate: 30,
+      initialProbability: 40,
+      yesTokenAddress: '0x4567...8901',
+      noTokenAddress: '0x1098...7654',
+      lpTokenAddress: '0xdefg...hijk',
+      poolAddress: '0xdefg...hijk',
+      marketAuthority: '0x789g...0h1i',
     },
     {
-      id: '5',
+      id: 'mock-5',
       question: 'Will the next US President be a Democrat?',
+      description: 'Demo market for presentation purposes',
       category: 'politics',
-      probability: 0.52,
-      volume: 1234567,
+      probability: 52,
+      totalVolume: 1234567,
       liquidity: 345678,
       expiresAt: new Date('2025-01-20'),
+      createdAt: new Date('2024-01-15'),
       totalTraders: 5678,
+      resolved: false,
+      creator: '0xabc1...2def',
+      isDynamic: false,
+      feeRate: 30,
+      initialProbability: 50,
+      yesTokenAddress: '0x5678...9012',
+      noTokenAddress: '0x2109...8765',
+      lpTokenAddress: '0xefgh...ijkl',
+      poolAddress: '0xefgh...ijkl',
+      marketAuthority: '0xabc1...2def',
     },
     {
-      id: '6',
+      id: 'mock-6',
       question: 'Will SpaceX land humans on Mars by 2030?',
+      description: 'Demo market for presentation purposes',
       category: 'science',
-      probability: 0.18,
-      volume: 345678,
+      probability: 18,
+      totalVolume: 345678,
       liquidity: 67890,
       expiresAt: new Date('2030-01-01'),
+      createdAt: new Date('2024-03-20'),
       totalTraders: 2345,
+      resolved: false,
+      creator: '0x234b...5cde',
+      isDynamic: true,
+      feeRate: 30,
+      initialProbability: 15,
+      yesTokenAddress: '0x6789...0123',
+      noTokenAddress: '0x3210...9876',
+      lpTokenAddress: '0xfghi...jklm',
+      poolAddress: '0xfghi...jklm',
+      marketAuthority: '0x234b...5cde',
     },
   ];
+
+  // Load real markets from contract
+  useEffect(() => {
+    const loadRealMarkets = async () => {
+      try {
+        setIsLoadingRealMarkets(true);
+        setRealMarketsError(null);
+        
+        // Get mock markets first (always available)
+        const mockMarkets = getMockMarkets();
+        
+        try {
+          // Try to load real markets from contract
+          const realMarkets = await getAllMarkets();
+
+          console.log('Loaded real markets:', realMarkets);
+
+          // Combine mock markets + real markets
+          setAllMarkets([...mockMarkets, ...realMarkets]);
+        } catch (contractError) {
+          console.warn('Could not load real markets from contract:', contractError);
+          // Fall back to just mock markets if contract fails
+          setAllMarkets(mockMarkets);
+          setRealMarketsError('Could not load real markets from contract');
+        }
+      } catch (error) {
+        console.error('Error loading markets:', error);
+        // Fallback to mock markets only
+        setAllMarkets(getMockMarkets());
+        setRealMarketsError('Failed to load markets');
+      } finally {
+        setIsLoadingRealMarkets(false);
+      }
+    };
+
+    loadRealMarkets();
+  }, []);
+
+  // Filter and sort markets
+  const filteredMarkets = allMarkets.filter(market => {
+    const matchesSearch = market.question.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || market.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  // Sort markets
+  const sortedMarkets = [...filteredMarkets].sort((a, b) => {
+    switch (sortBy) {
+      case 'volume':
+        return b.totalVolume - a.totalVolume;
+      case 'liquidity':
+        return b.liquidity - a.liquidity;
+      case 'ending-soon':
+        return a.expiresAt.getTime() - b.expiresAt.getTime();
+      case 'newest':
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      default:
+        return 0;
+    }
+  });
+
 
   return (
     <>
@@ -272,7 +412,7 @@ export default function MarketsPage() {
                     <motion.button
                       key={option.id}
                       onClick={() => {
-                        setSortBy(option.id as any);
+                        setSortBy(option.id as MarketSortBy);
                         setShowSortDropdown(false);
                       }}
                       className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${
@@ -320,6 +460,37 @@ export default function MarketsPage() {
             />
           </motion.div>
 
+          {/* Loading State */}
+          {isLoadingRealMarkets && (
+            <motion.div 
+              className="flex items-center justify-center py-12"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mr-3" />
+              <span className="text-gray-400">Loading real markets from contract...</span>
+            </motion.div>
+          )}
+
+          {/* Error Message */}
+          {realMarketsError && (
+            <motion.div 
+              className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <div className="flex items-center space-x-3">
+                <Loader2 className="w-5 h-5 text-yellow-400" />
+                <div>
+                  <div className="font-semibold text-yellow-400 mb-1">Contract Connection Issue</div>
+                  <div className="text-sm text-yellow-300">
+                    {realMarketsError}. Showing demo markets only.
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {/* Markets Grid with Staggered Animation */}
           <motion.div 
             className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8"
@@ -327,7 +498,7 @@ export default function MarketsPage() {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.8, delay: 1.2 }}
           >
-            {mockMarkets.map((market, index) => (
+            {sortedMarkets.map((market: Market, index: number) => (
               <motion.div
                 key={market.id}
                 initial={{ opacity: 0, y: 30 }}

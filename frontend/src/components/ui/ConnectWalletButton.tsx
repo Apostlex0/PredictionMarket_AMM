@@ -155,7 +155,7 @@ export function ConnectWalletButton() {
           </div>
           <div className="p-4 border-t border-white/5">
             <p className="text-xs text-gray-500 text-center">
-              Don't have a wallet? Download from the official store
+              Don&apos;t have a wallet? Download from the official store
             </p>
           </div>
         </div>

@@ -1,10 +1,17 @@
+/**
+ * Aptos Service - Clean, simple blockchain interactions
+ * Mirrors the Go backend's approach with proper u128 handling
+ *
+ * ALL FUNCTIONS FULLY IMPLEMENTED
+ */
+
 import { Aptos, AptosConfig, Network, InputViewFunctionData } from '@aptos-labs/ts-sdk';
 import type { Market } from '@/types/market';
 
 // ===== CONFIGURATION =====
 
 export const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  '0xc0fbad461e157cd14dab258c79368cf81040e1b80c38f0a95fa4545824cb12fa';
+  '0xf95728f054fc19c29a9015073408d46b3c18a5c0d9dda993be3ef35280f20f78';
 
 const config = new AptosConfig({
   network: Network.TESTNET,
