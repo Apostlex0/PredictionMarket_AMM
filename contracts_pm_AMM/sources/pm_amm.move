@@ -120,6 +120,82 @@ module pm_amm::pm_amm {
         register_pool<YesToken, NoToken>(signer::address_of(creator), true);
     }
 
+    /// Mint prediction tokens by depositing APT collateral
+    public entry fun mint_prediction_tokens<YesToken, NoToken>(
+        user: &signer, 
+        market_addr: address, 
+        apt_amount: u64
+    ) {
+        prediction_market::mint_prediction_tokens<YesToken, NoToken>(user, market_addr, apt_amount);
+    }
+
+    /// Buy YES tokens with NO tokens
+    public entry fun buy_yes_tokens<YesToken, NoToken>(
+        buyer: &signer, 
+        market_addr: address, 
+        amount_in_no: u64, 
+        min_out_yes: u64
+    ) {
+        prediction_market::buy_yes<YesToken, NoToken>(buyer, market_addr, amount_in_no, min_out_yes);
+    }
+
+    /// Buy NO tokens with YES tokens  
+    public entry fun buy_no_tokens<YesToken, NoToken>(
+        buyer: &signer, 
+        market_addr: address, 
+        amount_in_yes: u64, 
+        min_out_no: u64
+    ) {
+        prediction_market::buy_no<YesToken, NoToken>(buyer, market_addr, amount_in_yes, min_out_no);
+    }
+
+    public entry fun add_market_liquidity<YesToken, NoToken>(
+        provider: &signer,
+        market_addr: address,
+        desired_value_increase_raw: u128  // Raw FixedPoint128 value
+    ) {
+        // Use raw value directly as FixedPoint128
+        let desired_value_increase = fixed_point::from_raw(desired_value_increase_raw);
+        //prediction_market::add_liquidity<YesToken, NoToken>(provider, market_addr, desired_value_increase);
+         prediction_market::add_pretrade_liquidity<YesToken, NoToken>(
+                provider, 
+                market_addr, 
+                desired_value_increase
+            );
+    }
+
+    /// Remove liquidity from a prediction market
+    public entry fun remove_market_liquidity<YesToken, NoToken>(
+        provider: &signer,
+        market_addr: address,
+        lp_to_burn: u128
+    ) {
+        prediction_market::remove_liquidity<YesToken, NoToken>(provider, market_addr, lp_to_burn);
+    }
+
+    // ===== Market Resolution Functions =====
+
+    /// Resolve a prediction market
+    public entry fun resolve_prediction_market<YesToken, NoToken>(
+        resolver: &signer,
+        market_addr: address,
+        outcome_yes: bool
+    ) {
+        prediction_market::resolve_market<YesToken, NoToken>(resolver, market_addr, outcome_yes);
+    }
+
+    /// Settle tokens after market resolution with collateral redemption - PRIMARY REDEMPTION METHOD)
+    public entry fun settle_tokens_with_collateral<YesToken, NoToken>(
+        holder: &signer,
+        market_addr: address,
+        yes_amount: u64,
+        no_amount: u64
+    ) {
+        prediction_market::settle_tokens_with_collateral<YesToken, NoToken>(
+            holder, market_addr, yes_amount, no_amount
+        );
+    }
+
     // ===== Prediction Market View Functions =====
 
 #[view]
