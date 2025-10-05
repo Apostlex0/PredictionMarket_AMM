@@ -205,6 +205,106 @@ public fun is_paused(): bool acquires ProtocolConfig {
     config.is_paused
 }
 
+
+#[view]
+public fun get_swap_quote<X, Y>(
+    pool_owner: address, amount_in: u64, is_x_to_y: bool
+): (u64, FixedPoint128) {
+    assert!(pool_state::pool_exists<X, Y>(pool_owner), E_NOT_INITIALIZED);
+    pool_state::get_swap_quote_friend<X, Y>(pool_owner, amount_in, is_x_to_y)
+}
+
+// ===== Prediction Market View Functions =====
+#[view]
+public fun get_market_info<YesToken, NoToken>(
+    market_addr: address
+): (String, String, String, u64, u64, bool, Option<bool>) {
+    prediction_market::get_market_info<YesToken, NoToken>(market_addr)
+}
+
+#[view]
+public fun get_market_price_info<YesToken, NoToken>(
+    market_addr: address
+): (FixedPoint128, u128) {
+    prediction_market::get_market_price<YesToken, NoToken>(market_addr)
+}
+
+#[view]
+public fun get_market_probability<YesToken, NoToken>(
+    market_addr: address
+): FixedPoint128 {
+    prediction_market::get_current_probability<YesToken, NoToken>(market_addr)
+}
+
+#[view]
+public fun get_market_reserves<YesToken, NoToken>(
+    market_addr: address
+): (u64, u64) {
+    prediction_market::get_market_reserves<YesToken, NoToken>(market_addr)
+}
+
+#[view]
+public fun get_user_prediction_balances<YesToken, NoToken>(
+    user_addr: address, market_addr: address
+): (u64, u64) {
+    prediction_market::get_user_balances<YesToken, NoToken>(user_addr, market_addr)
+}
+
+#[view]
+public fun market_exists<YesToken, NoToken>(market_addr: address): bool {
+    prediction_market::market_exists<YesToken, NoToken>(market_addr)
+}
+
+#[view]
+public fun get_lp_analytics<YesToken, NoToken>(
+    market_addr: address, lp_address: address, lp_tokens: u128
+): (FixedPoint128, FixedPoint128, FixedPoint128, FixedPoint128) {
+    prediction_market::get_lp_loss_analytics<YesToken, NoToken>(
+        market_addr, lp_address, lp_tokens
+    )
+}
+
+#[view]
+public fun get_final_settlement<YesToken, NoToken>(
+    market_addr: address, lp_address: address, lp_tokens: u128
+): (FixedPoint128, FixedPoint128, FixedPoint128) {
+    prediction_market::get_final_settlement_with_loss<YesToken, NoToken>(
+        market_addr, lp_address, lp_tokens
+    )
+}
+
+
+#[view]
+public fun get_all_markets(): vector<PoolRecord> acquires PoolRegistry {
+    if (!exists<PoolRegistry>(@pm_amm)) { return vector::empty<PoolRecord>() };
+    let registry = borrow_global<PoolRegistry>(@pm_amm);
+    registry.pools
+}
+
+#[view]
+public fun preview_add_liquidity_quote<YesToken, NoToken>(
+    market_addr: address, desired_value_increase_raw: u128
+): (u64, u64, u128, FixedPoint128) {
+    let desired = fixed_point::from_raw(desired_value_increase_raw);
+    prediction_market::preview_add_liquidity<YesToken, NoToken>(market_addr, desired)
+}
+
+#[view]
+public fun preview_remove_liquidity_quote<YesToken, NoToken>(
+    market_addr: address, lp_tokens_to_burn: u128
+): (u64, u64) {
+    prediction_market::preview_remove_liquidity<YesToken, NoToken>(
+        market_addr, lp_tokens_to_burn
+    )
+}
+
+#[view]
+public fun get_user_lp_position<YesToken, NoToken>(
+    user_addr: address, market_addr: address
+): (u64, FixedPoint128, u64, u64) {
+    prediction_market::get_user_lp_position<YesToken, NoToken>(user_addr, market_addr)
+}
+
         // ===== Internal Functions =====
 
     fun assert_not_paused() acquires ProtocolConfig {
