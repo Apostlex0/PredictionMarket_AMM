@@ -105,7 +105,7 @@ export function u128ToNumber(u128Value: unknown): number {
     // Extract string or numeric value
     const str =
       typeof u128Value === "object" && u128Value !== null && "value" in u128Value
-        ? (u128Value as any).value
+        ? (u128Value as { value: unknown }).value
         : u128Value;
 
     if (str === null || str === undefined) return 0;
@@ -456,8 +456,11 @@ export async function marketExists(marketAddress: string): Promise<boolean> {
  * This function returns null to indicate quotes are unavailable.
  */
 export async function getSwapQuote(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   poolOwner: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   amountIn: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   isXToY: boolean
 ): Promise<SwapQuote | null> {
   // The view function doesn't work for prediction markets (pool is embedded in PredictionMarket struct)
