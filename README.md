@@ -4,6 +4,18 @@
 
 The core of **Morpheus** translates the complex mathematical foundations of the PM-AMM—rooted in Gaussian score dynamics and normal distribution functions—into a secure and modular set of on-chain smart contracts. It provides a superior alternative to traditional AMMs, which are ill-suited for the unique price dynamics of binary outcome tokens.
 
+## Transaction Hashes:
+
+`pm_amm package deployed at :` [0xf95728f054fc19c29a9015073408d46b3c18a5c0d9dda993be3ef35280f20f78](https://explorer.aptoslabs.com/account/0xf95728f054fc19c29a9015073408d46b3c18a5c0d9dda993be3ef35280f20f78/modules/packages/pm_amm?network=testnet)
+
+`create_prediction_market:` https://explorer.aptoslabs.com/txn/6897272898?network=testnet
+
+`mint_prediction_tokens:` https://explorer.aptoslabs.com/txn/6897273580?network=testnet
+
+`add_market_liquidity:` https://explorer.aptoslabs.com/txn/6897274357?network=testnet
+
+`buy_yes_tokens:` https://explorer.aptoslabs.com/txn/6897281054?network=testnet
+
 ## Table of Contents
 <ol>
     <li><a href="#1-overview">Overview</a>
