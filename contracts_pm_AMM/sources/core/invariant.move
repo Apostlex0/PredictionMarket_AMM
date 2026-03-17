@@ -249,8 +249,15 @@ public fun newton_raphson_solve(
             return current
         };
 
-        // f'(current)
-        let deriv = compute_invariant_derivative(&curr_x, &curr_y, liquidity_L, solving_for_y);
+        // f'(current) w.r.t. the output amount
+        // compute_invariant_derivative returns ∂I/∂y or ∂I/∂x.
+        // But we are solving for the output amount `d` where y_actual = y_after - d
+        // (or x_actual = x_after - d), so by the chain rule:
+        //   df/dd = ∂I/∂y · ∂(y_after - d)/∂d = -∂I/∂y   (negate!)
+        // Without this negation the Newton step moves in the wrong direction,
+        // causing divergence or very slow (damping-dependent) convergence.
+        let raw_deriv = compute_invariant_derivative(&curr_x, &curr_y, liquidity_L, solving_for_y);
+        let deriv = signed_fixed_point::negate(&raw_deriv);
         let deriv_abs = signed_fixed_point::abs(&deriv);
 
         // Derivative too small => break and return best guess
