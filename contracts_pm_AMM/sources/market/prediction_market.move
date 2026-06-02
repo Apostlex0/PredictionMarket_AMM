@@ -311,6 +311,29 @@ module pm_amm::prediction_market {
         
         // Create market authority (resource account for controlling APT)
         let (market_signer, market_signer_cap) = account::create_resource_account(creator, b"prediction_market");
+
+        // Back the initial redeemable outcome token inventory.
+        //
+        // Exactly one side resolves in a binary market, so collateral must
+        // cover the larger of the initial YES and NO reserve supplies.
+        let initial_required_collateral =
+            if (required_x_yes >= required_y_no) {
+                required_x_yes
+            } else {
+                required_y_no
+            };
+
+        if (initial_required_collateral > 0) {
+            let market_authority_addr = signer::address_of(&market_signer);
+
+            pfs::transfer(
+                creator,
+                apt_metadata,
+                market_authority_addr,
+                initial_required_collateral
+            );
+        };
+
         
         // Initialize dynamic tracking for dynamic pools
         if (is_dynamic) {
@@ -370,12 +393,27 @@ module pm_amm::prediction_market {
             fa::deposit_with_ref(&m.no_transfer_ref, m.no_reserve, initial_no_tokens);
         };
 
-        // Seed LP ledger to creator (use pool's LP supply as source of truth)
+        // Seed the creator's initial LP position.
+        //
+        // The internal LP accounting balance and the actual LP fungible-asset
+        // balance must remain aligned because remove_liquidity burns LP assets.
         let initial_lp_supply = pool_state::get_lp_supply(&m.pool);
+
         if (initial_lp_supply > 0) {
+            let initial_lp_tokens =
+                fa::mint(&m.lp_mint_ref, (initial_lp_supply as u64));
+
+            let creator_lp_store =
+                pfs::ensure_primary_store_exists(owner, m.lp_metadata);
+
+            fa::deposit_with_ref(
+                &m.lp_transfer_ref,
+                creator_lp_store,
+                initial_lp_tokens
+            );
+
             let acc = load_lp_acc(&mut m.lp_accounts, owner);
-            acc.lp_balance = acc.lp_balance + initial_lp_supply;
-            // No fee index tracking needed - fees distributed via FA vaults
+            acc.lp_balance += initial_lp_supply;
         };
 
         // persist + event
@@ -394,8 +432,14 @@ module pm_amm::prediction_market {
 
     // ===== Collateral Operations =====
     
-    /// Deposit APT collateral to mint YES and NO tokens (100 octas → 1 YES + 1 NO)
-    /// Since 1 APT = 10^8 octas, 1 APT will mint 10^6 (1,000,000) tokens of each type
+    /// Deposit APT collateral to mint matched YES and NO outcome units.
+    ///
+    /// Raw-unit invariant:
+    ///   octa_amount APT units -> octa_amount YES units
+    ///                         + octa_amount NO units
+    ///
+    /// APT and outcome assets use 8 decimals, so:
+    ///   1 APT -> 1 YES + 1 NO
     public fun mint_prediction_tokens<YesToken, NoToken>(
         user: &signer, market_addr: address, octa_amount: u64
     ) acquires PredictionMarket {
@@ -881,7 +925,7 @@ module pm_amm::prediction_market {
             fa::zero(m.no_metadata)
         };
         
-        // Calculate payout: only winning tokens have value (1 token = 100 octas)
+        // Calculate payout: only winning tokens have value (1 token = 1 APT)
         let winning_token_count = if (winning_outcome) { yes_amount } else { no_amount };
         let octa_payout = winning_token_count ;
         
