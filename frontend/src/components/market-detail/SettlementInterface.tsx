@@ -6,31 +6,48 @@ import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { motion } from 'framer-motion';
 import { Market } from '@/types/market';
 import { getUserBalances, buildSettleTokensPayload } from '@/lib/aptos_service';
+import { formatApt, formatOutcome } from '@/lib/amounts';
 
 interface SettlementInterfaceProps {
   market: Market;
   onSettlementComplete?: () => void;
 }
 
-interface UserBalances {
-  yesTokens: number;
-  noTokens: number;
-  totalValue: number;
-  winningTokens: number;
-  losingTokens: number;
-  potentialPayout: number;
-}
+type RawSettlementBalances = {
+  yesRaw: string;
+  noRaw: string;
+};
 
 export default function SettlementInterface({ market, onSettlementComplete }: SettlementInterfaceProps) {
   const { account, connected, signAndSubmitTransaction } = useWallet();
   
   // Component state
-  const [balances, setBalances] = useState<UserBalances | null>(null);
+  const [rawBalances, setRawBalances] = useState<RawSettlementBalances>({
+  yesRaw: '0',
+  noRaw: '0',
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingBalances, setIsLoadingBalances] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
+
+  const yesDisplay = formatOutcome(rawBalances.yesRaw);
+  const noDisplay = formatOutcome(rawBalances.noRaw);
+
+  const winningRaw = market.outcome
+    ? rawBalances.yesRaw
+    : rawBalances.noRaw;
+  
+  const losingRaw = market.outcome
+    ? rawBalances.noRaw
+    : rawBalances.yesRaw;
+  
+  const winningDisplay = formatOutcome(winningRaw);
+  const losingDisplay = formatOutcome(losingRaw);
+  const payoutDisplay = formatApt(winningRaw);
+  
+  const hasTokensToSettle =BigInt(rawBalances.yesRaw) > 0n || BigInt(rawBalances.noRaw) > 0n;
 
   // Clear messages after delay
   useEffect(() => {
@@ -51,67 +68,74 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
   useEffect(() => {
     const loadBalances = async () => {
       if (!connected || !account || !market.resolved) {
+        setRawBalances({
+          yesRaw: '0',
+          noRaw: '0',
+        });
         setIsLoadingBalances(false);
         return;
       }
-
+  
       try {
         setIsLoadingBalances(true);
-
-        // For mock markets, use demo data
+        setError(null);
+        // Demo values expressed as raw octa sized units.
         if (market.id.startsWith('mock-')) {
-          const mockBalances: UserBalances = {
-            yesTokens: 150,
-            noTokens: 75,
-            totalValue: 225,
-            winningTokens: market.outcome ? 150 : 75,
-            losingTokens: market.outcome ? 75 : 150,
-            potentialPayout: (market.outcome ? 150 : 75) * 0.01, // 1 token = 100 octas = 0.01 APT
-          };
-          setBalances(mockBalances);
+          setRawBalances({
+            yesRaw: '15000000000',
+            noRaw: '7500000000',
+          });
+          return;
+        }
+  
+        const balances = await getUserBalances(
+          account.address.toString(),
+          market.poolAddress,
+        );
+  
+        if (!balances) {
+          setRawBalances({
+            yesRaw: '0',
+            noRaw: '0',
+          });
+          setError('Failed to load token balances');
           return;
         }
 
-        // Load real balances from contract
-        const userBalances = await getUserBalances(
-          account.address.toString(),
-          market.poolAddress
-        );
+        setRawBalances({
+          yesRaw: balances.yes,
+          noRaw: balances.no,
+        });
+      } catch (loadError) {
+        console.error('Error loading balances:', loadError);
 
-        if (userBalances) {
-          const yesTokens = parseFloat(userBalances.yes) / Math.pow(10, 8);
-          const noTokens = parseFloat(userBalances.no) / Math.pow(10, 8);
-          const winningTokens = market.outcome ? yesTokens : noTokens;
-          const losingTokens = market.outcome ? noTokens : yesTokens;
-          const potentialPayout = winningTokens * 0.01; // 1 token = 100 octas = 0.01 APT
+        setRawBalances({
+          yesRaw: '0',
+          noRaw: '0',
+        });
 
-          setBalances({
-            yesTokens,
-            noTokens,
-            totalValue: yesTokens + noTokens,
-            winningTokens,
-            losingTokens,
-            potentialPayout,
-          });
-        }
-      } catch (error) {
-        console.error('Error loading balances:', error);
         setError('Failed to load token balances');
       } finally {
         setIsLoadingBalances(false);
       }
     };
 
-    loadBalances();
-  }, [connected, account, market]);
+    void loadBalances();
+  }, [
+    connected,
+    account,
+    market.id,
+    market.poolAddress,
+    market.resolved,
+  ]);
 
   const handleSettle = async () => {
-    if (!connected || !account || !balances) {
-      setError('Please connect wallet and ensure balances are loaded');
+    if (!connected || !account) {
+      setError('Please connect your wallet');
       return;
     }
 
-    if (balances.totalValue === 0) {
+    if (!hasTokensToSettle) {
       setError('No tokens to settle');
       return;
     }
@@ -119,12 +143,18 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
     // Skip settlement for mock markets (just show success)
     if (market.id.startsWith('mock-')) {
       setIsLoading(true);
+      setError(null);
+      setSuccessMessage(null);
+
       setTimeout(() => {
         setIsLoading(false);
-        setSuccessMessage(`Demo settlement complete! You would receive ${balances.potentialPayout.toFixed(4)} APT`);
         setShowConfirmation(false);
+        setSuccessMessage(
+          `Demo settlement complete! You would receive approximately ${payoutDisplay} APT`,
+        );
         onSettlementComplete?.();
       }, 2000);
+
       return;
     }
 
@@ -133,15 +163,11 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
       setError(null);
       setSuccessMessage(null);
 
-      // Convert token amounts to u64 (with 8 decimals)
-      const yesAmountU64 = (balances.yesTokens * Math.pow(10, 8)).toString();
-      const noAmountU64 = (balances.noTokens * Math.pow(10, 8)).toString();
-
       // Build settlement transaction
       const payload = buildSettleTokensPayload(
         market.poolAddress,
-        yesAmountU64,
-        noAmountU64
+        rawBalances.yesRaw,
+        rawBalances.noRaw,
       );
 
       // Submit transaction
@@ -150,7 +176,7 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
         data: payload
       });
 
-      setSuccessMessage(`Settlement successful! You received ${balances.potentialPayout.toFixed(4)} APT`);
+      setSuccessMessage(`Settlement successful! You received ${payoutDisplay} APT`);
       setShowConfirmation(false);
       onSettlementComplete?.();
     } catch (error) {
@@ -206,7 +232,7 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
   }
 
   // No tokens to settle
-  if (!balances || balances.totalValue === 0) {
+  if (!hasTokensToSettle) {
     return (
       <div className="relative">
         <div className="absolute inset-0 bg-gradient-to-r from-gray-500/10 to-slate-500/10 rounded-3xl blur-xl"></div>
@@ -287,7 +313,7 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
                     <span className="text-sm text-gray-400">YES Tokens</span>
                     {market.outcome && <CheckCircle className="w-4 h-4 text-green-400" />}
                   </div>
-                  <div className="text-2xl font-bold text-white">{balances.yesTokens.toFixed(2)}</div>
+                  <div className="text-2xl font-bold text-white">{yesDisplay}</div>
                   {market.outcome && (
                     <div className="text-xs text-green-400">Winning tokens!</div>
                   )}
@@ -302,7 +328,7 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
                     <span className="text-sm text-gray-400">NO Tokens</span>
                     {!market.outcome && <CheckCircle className="w-4 h-4 text-green-400" />}
                   </div>
-                  <div className="text-2xl font-bold text-white">{balances.noTokens.toFixed(2)}</div>
+                  <div className="text-2xl font-bold text-white">{noDisplay}</div>
                   {!market.outcome && (
                     <div className="text-xs text-green-400">Winning tokens!</div>
                   )}
@@ -316,16 +342,16 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Winning Tokens:</span>
-                  <span className="text-white font-semibold">{balances.winningTokens.toFixed(2)}</span>
+                  <span className="text-white font-semibold">{winningDisplay}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Losing Tokens:</span>
-                  <span className="text-gray-500">{balances.losingTokens.toFixed(2)}</span>
+                  <span className="text-gray-500">{losingDisplay}</span>
                 </div>
                 <div className="border-t border-blue-500/30 pt-2 mt-2">
                   <div className="flex justify-between">
                     <span className="text-blue-300 font-semibold">APT Payout:</span>
-                    <span className="text-green-400 font-bold">{balances.potentialPayout.toFixed(4)} APT</span>
+                    <span className="text-green-400 font-bold">{payoutDisplay} APT</span>
                   </div>
                 </div>
               </div>
@@ -340,7 +366,7 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
             >
               <div className="flex items-center justify-center space-x-2">
                 <Gift className="w-5 h-5" />
-                <span>Claim {balances.potentialPayout.toFixed(4)} APT</span>
+                <span>Claim {payoutDisplay} APT</span>
               </div>
             </motion.button>
 
@@ -366,10 +392,10 @@ export default function SettlementInterface({ market, onSettlementComplete }: Se
                 </div>
                 <div className="space-y-2 mb-4">
                   <div className="text-sm text-gray-400">
-                    Burn: {balances.yesTokens.toFixed(2)} YES + {balances.noTokens.toFixed(2)} NO tokens
+                    Burn: {yesDisplay} YES + {noDisplay} NO tokens
                   </div>
                   <div className="text-xl font-bold text-green-400">
-                    Receive: {balances.potentialPayout.toFixed(4)} APT
+                    Receive: {payoutDisplay} APT
                   </div>
                 </div>
                 <div className="text-xs text-gray-500">

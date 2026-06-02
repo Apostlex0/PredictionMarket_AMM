@@ -10,6 +10,7 @@ import {
   buildAddLiquidityPayload,
   u128ToNumber
 } from '@/lib/aptos_service';
+import { formatOutcome, formatLp } from '@/lib/amounts';
 
 interface LiquidityPreview {
   requiredYes: string;
@@ -23,7 +24,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
     const { account, connected, signAndSubmitTransaction } = useWallet();
     
     // PM-AMM uses VALUE-BASED liquidity, not token amounts
-    const [usdAmount, setUsdAmount] = useState('');
+    const [desiredValue, setDesiredValue] = useState('');
     const [preview, setPreview] = useState<LiquidityPreview | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isExecutingTransaction, setIsExecutingTransaction] = useState(false);
@@ -33,7 +34,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
     // Get liquidity preview when USD amount changes
     useEffect(() => {
         const getPreview = async () => {
-            if (!usdAmount || parseFloat(usdAmount) <= 0) {
+            if (!desiredValue || parseFloat(desiredValue) <= 0) {
                 setPreview(null);
                 return;
             }
@@ -44,7 +45,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
             try {
                 const result = await previewAddLiquidity(
                     market.poolAddress,
-                    parseFloat(usdAmount)
+                    parseFloat(desiredValue)
                 );
 
                 if (result) {
@@ -55,14 +56,8 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         shareOfPool: u128ToNumber(result.shareOfPool), // Convert FixedPoint128 to decimal
                     });
                 } else {
-                    // Fallback to mock calculation for development
-                    const mockPreview = {
-                        requiredYes: (parseFloat(usdAmount) * market.probability).toFixed(2),
-                        requiredNo: (parseFloat(usdAmount) * (1 - market.probability)).toFixed(2),
-                        lpTokens: usdAmount,
-                        shareOfPool: parseFloat(usdAmount) / (market.liquidity + parseFloat(usdAmount)),
-                    };
-                    setPreview(mockPreview);
+                    setPreview(null);
+                    setError('Liquidity preview unavailable');
                 }
             } catch (err) {
                 console.error('Error getting liquidity preview:', err);
@@ -74,11 +69,11 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
 
         const timeoutId = setTimeout(getPreview, 300); // Debounce
         return () => clearTimeout(timeoutId);
-    }, [usdAmount, market]);
+    }, [desiredValue, market]);
 
     // Execute add liquidity transaction
     const handleAddLiquidity = async () => {
-        if (!preview || !usdAmount || parseFloat(usdAmount) <= 0 || !connected || !account) {
+        if (!preview || !desiredValue || parseFloat(desiredValue) <= 0 || !connected || !account) {
             setError('Please connect wallet and enter valid amount');
             return;
         }
@@ -90,7 +85,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
         try {
             const payload = buildAddLiquidityPayload(
                 market.poolAddress,
-                parseFloat(usdAmount)
+                parseFloat(desiredValue)
             );
 
             await signAndSubmitTransaction({
@@ -99,9 +94,9 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
             });
 
             // Success - reset form and show success message
-            setUsdAmount('');
+            setDesiredValue('');
             setPreview(null);
-            setSuccessMessage(`Successfully added $${usdAmount} liquidity to the market!`);
+            setSuccessMessage(`Liquidity added successfully.`);
 
         } catch (err: unknown) {
             console.error('Error adding liquidity:', err);
@@ -126,6 +121,10 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
         }
     }, [error]);
 
+    const requiredYesDisplay = preview ? formatOutcome(preview.requiredYes) : '0';
+    const requiredNoDisplay = preview ? formatOutcome(preview.requiredNo) : '0';
+    const lpTokensDisplay = preview ? formatLp(preview.lpTokens) : '0';
+
     return (
         <div className="relative">
             <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-3xl blur-2xl"></div>
@@ -144,7 +143,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         <div className="text-sm text-gray-300">
                             <div className="font-semibold text-cyan-300 mb-1">PM-AMM Liquidity</div>
                             <div>
-                                Specify the octa value you want to add. Our PM-AMM will automatically calculate the optimal YES and NO token amounts based on current market conditions.
+                               Specify your desired liquidity value. Our PM-AMM will automatically calculate the corresponding YES and NO token amounts based on current market conditions.
                             </div>
                         </div>
                     </div>
@@ -154,23 +153,22 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                 <div className="mb-6">
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400 flex items-center space-x-2">
-                            <DollarSign className="w-4 h-4" />
-                            <span>Octa Value to Add</span>
+                             Desired Liquidity Value
                         </span>
                     </div>
                     <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
                         <div className="flex items-center justify-between">
                             <input
                                 type="number"
-                                value={usdAmount}
-                                onChange={(e) => setUsdAmount(e.target.value)}
+                                value={desiredValue}
+                                onChange={(e) => setDesiredValue(e.target.value)}
                                 placeholder="0.00"
                                 className="bg-transparent text-3xl font-bold text-white outline-none w-full"
                                 min="0"
                                 step="0.01"
                             />
                             <div className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-bold text-sm">
-                                OCTA
+                                VALUE
                             </div>
                         </div>
                     </div>
@@ -185,11 +183,11 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
                                 <div className="text-xs text-gray-400 mb-1">YES Tokens Required</div>
-                                <div className="text-lg font-bold text-white">{parseFloat(preview.requiredYes).toFixed(2)}</div>
+                                <div className="text-lg font-bold text-white">{requiredYesDisplay}</div>
                             </div>
                             <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl">
                                 <div className="text-xs text-gray-400 mb-1">NO Tokens Required</div>
-                                <div className="text-lg font-bold text-white">{parseFloat(preview.requiredNo).toFixed(2)}</div>
+                                <div className="text-lg font-bold text-white">{requiredNoDisplay}</div>
                             </div>
                         </div>
 
@@ -197,7 +195,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         <div className="space-y-2 pt-2 border-t border-white/10">
                             <div className="flex justify-between text-sm">
                                 <span className="text-gray-400">LP Tokens to Receive</span>
-                                <span className="text-white font-semibold">{parseFloat(preview.lpTokens).toFixed(2)}</span>
+                                <span className="text-white font-semibold">{lpTokensDisplay}</span>
                             </div>
                             <div className="flex justify-between text-sm">
                                 <span className="text-gray-400">Share of Pool</span>
@@ -285,22 +283,22 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                     onClick={handleAddLiquidity}
                     disabled={
                       !connected || 
-                      !usdAmount || 
-                      parseFloat(usdAmount) <= 0 || 
+                      !desiredValue || 
+                      parseFloat(desiredValue) <= 0 || 
                       isLoading || 
                       isExecutingTransaction ||
                       !preview
                     }
                     className={`w-full py-4 rounded-2xl font-bold text-white text-lg transition-all duration-300 relative overflow-hidden shadow-2xl border border-white/20 group ${
-                      !connected || !usdAmount || parseFloat(usdAmount) <= 0 || isLoading || isExecutingTransaction || !preview
+                      !connected || !desiredValue || parseFloat(desiredValue) <= 0 || isLoading || isExecutingTransaction || !preview
                         ? 'bg-gray-600 cursor-not-allowed'
                         : 'bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500 hover:from-cyan-400 hover:via-blue-400 hover:to-purple-400 shadow-cyan-500/30'
                     }`}
-                    whileHover={!connected || !usdAmount || parseFloat(usdAmount) <= 0 || isLoading || isExecutingTransaction || !preview ? {} : { 
+                    whileHover={!connected || !desiredValue || parseFloat(desiredValue) <= 0 || isLoading || isExecutingTransaction || !preview ? {} : { 
                       scale: 1.02, 
                       boxShadow: "0 25px 50px -12px rgba(6, 182, 212, 0.5)"
                     }}
-                    whileTap={!connected || !usdAmount || parseFloat(usdAmount) <= 0 || isLoading || isExecutingTransaction || !preview ? {} : { scale: 0.98 }}
+                    whileTap={!connected || !desiredValue || parseFloat(desiredValue) <= 0 || isLoading || isExecutingTransaction || !preview ? {} : { scale: 0.98 }}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6, delay: 0.3 }}

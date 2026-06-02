@@ -13,13 +13,14 @@ import {
   formatBalance,
   u128ToNumber
 } from '@/lib/aptos_service';
+import { outcomeToRaw, formatOutcome } from '@/lib/amounts';
 
 interface SwapQuote {
   outputAmount: string;
   priceImpact: number;
 }
 
-interface UserBalances {
+interface RawSwapBalances {
   yes: string;
   no: string;
 }
@@ -35,7 +36,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
   
   // Quote and balance state
   const [quote, setQuote] = useState<SwapQuote | null>(null);
-  const [balances, setBalances] = useState<UserBalances>({ yes: '0', no: '0' });
+  const [balances, setBalances] = useState<RawSwapBalances>({ yes: '0', no: '0' });
   
   // UI state
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
@@ -92,14 +93,18 @@ export default function SwapInterface2({ market }: { market: Market }) {
 
       try {
         // Convert amount to proper units (8 decimals) using integer arithmetic to avoid floating point errors
-        const amountInUnits = Math.floor(parseFloat(amount) * Math.pow(10, 8)).toString();
+        const amountInRaw = outcomeToRaw(amount).toString();
+        if (BigInt(amountInRaw) <= 0n) {
+          setQuote(null);
+          return;
+        }
         
         // Determine swap direction (YES = X, NO = Y in pool)
         const isXToY = fromToken === 'YES';
         
         const result = await getSwapQuote(
           market.poolAddress,
-          amountInUnits,
+          amountInRaw,
           isXToY
         );
 
@@ -110,15 +115,19 @@ export default function SwapInterface2({ market }: { market: Market }) {
           });
         } else {
           // Fallback to mock calculation - use integer arithmetic to avoid floating point errors
-          const mockOutput = parseFloat(amount) * (fromToken === 'YES' ? (1 - market.probability) : market.probability);
-          const mockOutputU64 = Math.floor(mockOutput * Math.pow(10, 8));
+          const probabilityBasisPoints = BigInt(Math.round(market.probability * 10_000));
+          const outputFactor = fromToken === 'YES'
+            ? 10_000n - probabilityBasisPoints
+            : probabilityBasisPoints;
+          const mockOutputRaw = (BigInt(amountInRaw) * outputFactor) / 10_000n;
           setQuote({
-            outputAmount: mockOutputU64.toString(),
+            outputAmount: mockOutputRaw.toString(),
             priceImpact: 0.025, // 2.5%
           });
         }
       } catch (err) {
         console.error('Error getting swap quote:', err);
+        setQuote(null);
         setError('Failed to get swap quote');
       } finally {
         setIsLoadingQuote(false);
@@ -142,8 +151,10 @@ export default function SwapInterface2({ market }: { market: Market }) {
 
     try {
       // Convert to integer units (8 decimals) - use Math.floor to avoid floating point issues
-      const amountInUnits = Math.floor(parseFloat(amount) * Math.pow(10, 8)).toString();
-
+       const amountInRaw = outcomeToRaw(amount).toString();
+      if (BigInt(amountInRaw) <= 0n) {
+        throw new Error('Please enter a valid token amount');
+      }
       // Calculate minimum output with slippage using BigInt to avoid floating point errors
       // quote.outputAmount is already a u64 string (e.g., "100000000" for 1 token)
       const outputAmountBigInt = BigInt(quote.outputAmount);
@@ -155,12 +166,12 @@ export default function SwapInterface2({ market }: { market: Market }) {
       const payload = fromToken === 'NO'
         ? buildBuyYesPayload(
             market.poolAddress,
-            amountInUnits,
+            amountInRaw,
             minOutputWithSlippage
           )
         : buildBuyNoPayload(
             market.poolAddress,
-            amountInUnits,
+            amountInRaw,
             minOutputWithSlippage
           );
 
@@ -205,24 +216,32 @@ export default function SwapInterface2({ market }: { market: Market }) {
   };
 
   // Helper functions
-  const formatBalance = (balance: string): string => {
-    return (parseFloat(balance) / Math.pow(10, 8)).toFixed(2);
-  };
 
-  const formatOutput = (outputAmount: string): string => {
-    return (parseFloat(outputAmount) / Math.pow(10, 8)).toFixed(4);
-  };
-
-  const getCurrentBalance = (): string => {
+  const getCurrentRawBalance = (): string => {
     return fromToken === 'YES' ? balances.yes : balances.no;
   };
 
-  const isInsufficientBalance = (): boolean => {
-    if (!amount || !connected) return false;
-    const requiredAmount = parseFloat(amount) * Math.pow(10, 8);
-    const availableBalance = parseFloat(getCurrentBalance());
-    return requiredAmount > availableBalance;
+  const getRequestedRaw = (): bigint | null => {
+    if (!amount) return null;
+
+    try {
+      return outcomeToRaw(amount);
+    } catch {
+      return null;
+    }
   };
+
+  const requestedRaw = getRequestedRaw();
+  const hasValidPositiveAmount = requestedRaw !== null && requestedRaw > 0n;
+  const currentRawBalance = getCurrentRawBalance();
+
+  const availableRaw = BigInt(currentRawBalance);
+  const insufficientBalance = requestedRaw !== null && requestedRaw > availableRaw;
+
+  const fromBalanceDisplay = formatOutcome(currentRawBalance);
+  const toBalanceDisplay = formatOutcome(toToken === 'YES' ? balances.yes : balances.no);
+  const quotedOutputRaw = quote?.outputAmount ?? '0';
+  const quotedOutputDisplay = formatOutcome(quotedOutputRaw);
 
   const handleSwapDirection = () => {
     const newFromToken = toToken;
@@ -319,9 +338,9 @@ export default function SwapInterface2({ market }: { market: Market }) {
             <motion.span 
               className="text-sm text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer px-3 py-1 bg-white/5 rounded-full border border-white/10"
               whileHover={{ scale: 1.05 }}
-              onClick={() => connected && setAmount(formatBalance(getCurrentBalance()))}
+              onClick={() => connected && setAmount(fromBalanceDisplay)}
             >
-              Balance: {connected ? formatBalance(getCurrentBalance()) : '0.00'}
+              Balance: {connected ? fromBalanceDisplay : '0.00'}
             </motion.span>
           </div>
           <motion.div 
@@ -337,7 +356,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="0.0"
                   className={`bg-transparent text-2xl font-bold outline-none flex-1 placeholder-gray-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-                    isInsufficientBalance() ? 'text-red-400' : 'text-white'
+                    insufficientBalance ? 'text-red-400' : 'text-white'
                   }`}
                   disabled={!connected}
                   min="0"
@@ -364,7 +383,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
                 <Sparkles className="w-3 h-3" />
                 <span>≈ ${fromToken === 'YES' ? market.probability.toFixed(3) : (1 - market.probability).toFixed(3)} per token</span>
               </motion.div>
-              {isInsufficientBalance() && (
+              {insufficientBalance && (
                 <motion.div 
                   className="text-xs text-red-400 mt-1 flex items-center space-x-1"
                   initial={{ opacity: 0 }}
@@ -417,7 +436,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
               className="text-sm text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer px-3 py-1 bg-white/5 rounded-full border border-white/10"
               whileHover={{ scale: 1.05 }}
             >
-              Balance: {connected ? (toToken === 'YES' ? formatBalance(balances.yes) : formatBalance(balances.no)) : '0.00'}
+              Balance: {connected ? toBalanceDisplay : '0'}
             </motion.span>
           </div>
           <motion.div 
@@ -440,7 +459,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
                       <span className="text-lg">Loading...</span>
                     </div>
                   ) : quote ? (
-                    formatOutput(quote.outputAmount)
+                    quotedOutputDisplay
                   ) : (
                     '0.0000'
                   )}
@@ -549,22 +568,22 @@ export default function SwapInterface2({ market }: { market: Market }) {
             !connected || 
             !quote || 
             !amount || 
-            parseFloat(amount) <= 0 || 
-            isInsufficientBalance() || 
+            !hasValidPositiveAmount|| 
+            insufficientBalance || 
             isExecutingSwap || 
             isLoadingQuote
           }
           className={`w-full py-4 rounded-2xl font-bold text-white text-lg transition-all duration-300 relative overflow-hidden shadow-2xl border border-white/20 group ${
-            !connected || !quote || !amount || parseFloat(amount) <= 0 || isInsufficientBalance() || isExecutingSwap || isLoadingQuote
+            !connected || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote
               ? 'bg-gray-600 cursor-not-allowed'
               : 'bg-gradient-to-r from-cyan-500 via-blue-500 via-purple-500 to-pink-500 hover:from-cyan-400 hover:via-blue-400 hover:via-purple-400 hover:to-pink-400 shadow-cyan-500/30'
           }`}
-          whileHover={!connected || !quote || !amount || parseFloat(amount) <= 0 || isInsufficientBalance() || isExecutingSwap || isLoadingQuote ? {} : { 
+          whileHover={!connected || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { 
             scale: 1.02, 
             boxShadow: "0 25px 50px -12px rgba(6, 182, 212, 0.5)",
             borderColor: "rgba(255, 255, 255, 0.3)"
           }}
-          whileTap={!connected || !quote || !amount || parseFloat(amount) <= 0 || isInsufficientBalance() || isExecutingSwap || isLoadingQuote ? {} : { scale: 0.98 }}
+          whileTap={!connected || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { scale: 0.98 }}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.6 }}
@@ -586,7 +605,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                 <span className="tracking-wide">Getting Quote...</span>
               </>
-            ) : isInsufficientBalance() ? (
+            ) : insufficientBalance ? (
               <>
                 <AlertCircle className="w-5 h-5" />
                 <span className="tracking-wide">Insufficient Balance</span>

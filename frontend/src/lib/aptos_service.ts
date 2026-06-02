@@ -7,6 +7,7 @@
 
 import { Aptos, AptosConfig, Network, InputViewFunctionData } from '@aptos-labs/ts-sdk';
 import type { Market } from '@/types/market';
+import { formatOutcome } from '@/lib/amounts';
 
 // ===== CONFIGURATION =====
 
@@ -140,8 +141,7 @@ export function u128ToPercentage(u128String: string): string {
  * Format balance for display (8 decimals)
  */
 export function formatBalance(balance: string): string {
-  const balanceNum = parseFloat(balance) / Math.pow(10, 8);
-  return balanceNum.toFixed(2);
+  return formatOutcome(balance);
 }
 
 // ===== VIEW FUNCTIONS =====
@@ -599,8 +599,8 @@ export function buildBuyYesPayload(
   minOutYes: string
 ) {
   // Parse amounts to ensure they're valid integers (no decimals)
-  const amountInNoInt = Math.floor(parseFloat(amountInNo)).toString();
-  const minOutYesInt = Math.floor(parseFloat(minOutYes)).toString();
+  const amountInNoInt = BigInt(amountInNo).toString();
+  const minOutYesInt = BigInt(minOutYes).toString();
 
   return {
     function: `${CONTRACT_ADDRESS}::pm_amm::buy_yes_tokens` as const,
@@ -621,8 +621,8 @@ export function buildBuyNoPayload(
   minOutNo: string
 ) {
   // Parse amounts to ensure they're valid integers (no decimals)
-  const amountInYesInt = Math.floor(parseFloat(amountInYes)).toString();
-  const minOutNoInt = Math.floor(parseFloat(minOutNo)).toString();
+  const amountInYesInt = BigInt(amountInYes).toString();
+  const minOutNoInt = BigInt(minOutNo).toString();
 
   return {
     function: `${CONTRACT_ADDRESS}::pm_amm::buy_no_tokens` as const,

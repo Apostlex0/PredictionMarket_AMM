@@ -6,6 +6,7 @@ import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { motion } from 'framer-motion';
 import { Market } from '@/types/market';
 import { buildMintTokensPayload } from '@/lib/aptos_service';
+import { aptToOctas, formatOutcome } from '@/lib/amounts';
 
 export default function MintCompleteSet({ market }: { market: Market }) {
   const { account, connected, signAndSubmitTransaction } = useWallet();
@@ -31,36 +32,37 @@ export default function MintCompleteSet({ market }: { market: Market }) {
     }
   }, [successMessage]);
 
-  // Calculate token amounts based on new contract ratio
-  const calculateTokenAmounts = (aptInput: string) => {
-    if (!aptInput || parseFloat(aptInput) <= 0) return { tokens: '0.00', octas: 0 };
-    
-    const aptValue = parseFloat(aptInput);
-    const octas = Math.floor(aptValue * 100000000); // Convert APT to octas (1 APT = 10^8 octas)
-    const tokens = octas / 100; // 100 octas = 1 token
-    
-    return { 
-      tokens: tokens.toFixed(2), 
-      octas 
-    };
+  // Calculate mint output using the same raw-unit logic as the contract
+  const getMintQuote = () => {
+    if (!aptAmount.trim()) {
+      return null;
+    }
+  
+    try {
+      const octas = aptToOctas(aptAmount);
+  
+      return {
+        octas,
+        yesDisplay: formatOutcome(octas),
+        noDisplay: formatOutcome(octas),
+      };
+    } catch {
+      return null;
+    }
   };
-
-  const { tokens: tokenAmount, octas } = calculateTokenAmounts(aptAmount);
-  const isValidAmount = octas >= 100; // Minimum 100 octas required
-
+  
+  const quote = getMintQuote();
+  const isValidAmount = quote !== null && quote.octas >= 100n;
   const handleMint = async () => {
     if (!connected || !account) {
       setError('Please connect your wallet');
       return;
     }
 
-    if (!aptAmount || parseFloat(aptAmount) <= 0) {
-      setError('Please enter a valid APT amount');
-      return;
-    }
+    const quote = getMintQuote();
 
-    if (!isValidAmount) {
-      setError('Minimum amount is 0.000001 APT (100 octas)');
+    if (!quote || quote.octas < 100n) {
+      setError('Minimum deposit is 100 octas.');
       return;
     }
 
@@ -78,7 +80,7 @@ export default function MintCompleteSet({ market }: { market: Market }) {
       // Build transaction payload
       const payload = buildMintTokensPayload(
         market.poolAddress,
-        octas.toString()
+        quote.octas.toString()
       );
 
       // Submit transaction
@@ -87,7 +89,7 @@ export default function MintCompleteSet({ market }: { market: Market }) {
         data: payload
       });
 
-      setSuccessMessage(`Successfully minted ${tokenAmount} YES and ${tokenAmount} NO tokens!`);
+      setSuccessMessage(`Successfully minted ${quote.yesDisplay} YES and ${quote.noDisplay} NO tokens!`);
       setAptAmount('');
     } catch (error) {
       console.error('Error minting tokens:', error);
@@ -111,8 +113,11 @@ export default function MintCompleteSet({ market }: { market: Market }) {
         {/* Explanation */}
         <div className="mb-6 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl">
           <p className="text-sm text-gray-300 leading-relaxed">
-            Deposit APT to mint prediction tokens. <span className="font-semibold text-white">100 octas = 1 token</span> (1 APT = 1,000,000 tokens). 
-            Each APT creates equal amounts of YES and NO tokens backed by collateral.
+            Deposit APT to mint prediction tokens.{' '}
+            <span className="font-semibold text-white">
+              1 APT mints 1 YES and 1 NO.
+            </span>{' '}
+            Winning tokens redeem 1:1 for APT after resolution. Minimum deposit: 100 octas.
           </p>
         </div>
 
@@ -189,9 +194,9 @@ export default function MintCompleteSet({ market }: { market: Market }) {
         <div className="mb-6 p-4 bg-white/5 rounded-2xl">
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm text-gray-400">You will receive:</div>
-            {aptAmount && (
+            {quote && (
               <div className="text-xs text-gray-500">
-                {octas.toLocaleString()} octas → {tokenAmount} tokens each
+                {quote.octas.toLocaleString()} octas deposited
               </div>
             )}
           </div>
@@ -200,20 +205,20 @@ export default function MintCompleteSet({ market }: { market: Market }) {
               className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl"
               whileHover={{ scale: 1.02 }}
             >
-              <div className="text-2xl font-bold text-white mb-1">{tokenAmount}</div>
+              <div className="text-2xl font-bold text-white mb-1">{quote?.yesDisplay ?? '0'}</div>
               <div className="text-sm text-green-400">YES tokens</div>
             </motion.div>
             <motion.div 
               className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl"
               whileHover={{ scale: 1.02 }}
             >
-              <div className="text-2xl font-bold text-white mb-1">{tokenAmount}</div>
+              <div className="text-2xl font-bold text-white mb-1">{quote?.noDisplay ?? '0'}</div>
               <div className="text-sm text-red-400">NO tokens</div>
             </motion.div>
           </div>
           {aptAmount && !isValidAmount && (
             <div className="mt-3 text-xs text-orange-400">
-              ⚠️ Minimum amount: 0.000001 APT (100 octas)
+              ⚠️ Minimum amount: 100 octas
             </div>
           )}
         </div>
@@ -264,12 +269,12 @@ export default function MintCompleteSet({ market }: { market: Market }) {
             ) : !isValidAmount ? (
               <>
                 <AlertCircle className="w-5 h-5" />
-                <span>Minimum 0.000001 APT</span>
+                <span>Minimum deposit: 100 octas</span>
               </>
             ) : (
               <>
                 <Coins className="w-5 h-5" />
-                <span>Mint {tokenAmount} Tokens Each</span>
+                <span> Mint {quote?.yesDisplay ?? '0'} YES + {quote?.noDisplay ?? '0'} NO</span>
               </>
             )}
           </span>
