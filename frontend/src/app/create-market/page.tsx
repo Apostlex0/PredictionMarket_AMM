@@ -9,6 +9,7 @@ import {
   Info,
   AlertCircle,
   Calendar,
+  Clock,
   DollarSign,
   Percent,
   FileText,
@@ -20,15 +21,20 @@ import {
   Shield
 } from 'lucide-react';
 import Navigation from '@/components/Navigation';
-import { CONTRACT_ADDRESS, probabilityToU128, liquidityToU128 } from '@/lib/aptos_service';
+import {
+  CONTRACT_ADDRESS,
+  probabilityToU128,
+  liquidityValueAptToU128,
+} from '@/lib/aptos_service';
+import { aptToOctas } from '@/lib/amounts';
 
 interface MarketFormData {
   question: string;
   description: string;
   category: string;
-  expirationDays: number;
+  expirationMinutes: number;
   initialProbability: number;
-  initialLiquidity: number;
+  initialLiquidity: string;
   feeRate: number;
   resolutionSource: string;
   isDynamic: boolean;
@@ -48,9 +54,9 @@ export default function CreateMarketPage() {
     question: '',
     description: '',
     category: 'Politics',
-    expirationDays: 30,
+    expirationMinutes: 15,
     initialProbability: 50,
-    initialLiquidity: 10000,
+    initialLiquidity: '0.1',
     feeRate: 0.3,
     resolutionSource: '',
     isDynamic: true,
@@ -81,20 +87,32 @@ export default function CreateMarketPage() {
       errors.description = 'Description must be at least 20 characters';
     }
 
-    if (formData.expirationDays < 1) {
-      errors.expirationDays = 'Expiration must be at least 1 day';
-    } else if (formData.expirationDays > 365) {
-      errors.expirationDays = 'Expiration cannot exceed 365 days';
+    const minimumExpirationMinutes = formData.isDynamic ? 6 : 1;
+
+    if (formData.expirationMinutes < minimumExpirationMinutes) {
+      errors.expirationMinutes = formData.isDynamic
+        ? 'Dynamic markets must expire at least 6 minutes after creation because the first 5 minutes are reserved for liquidity collection.'
+        : 'Expiration must be at least 1 minute.';
+    } else if (formData.expirationMinutes > 10080) {
+      errors.expirationMinutes = 'Expiration cannot exceed 7 days in this testnet interface.';
     }
 
     if (formData.initialProbability < 1 || formData.initialProbability > 99) {
       errors.initialProbability = 'Initial probability must be between 1% and 99%';
     }
 
-    if (formData.initialLiquidity < 10) {
-      errors.initialLiquidity = 'Initial liquidity must be at least $10';
-    } else if (formData.initialLiquidity > 1000000000) {
-      errors.initialLiquidity = 'Initial liquidity cannot exceed 10 APT';
+    try {
+      const initialLiquidityOctas = aptToOctas(formData.initialLiquidity);
+
+      // UI safety floor: avoids creating a market whose initial PM-AMM
+      // reserves round down to unusably small raw amounts.
+      if (initialLiquidityOctas < 100_000n) {
+        errors.initialLiquidity = 'Initial liquidity must be at least 0.001 APT';
+      } else if (initialLiquidityOctas > 1_000_000_000n) {
+        errors.initialLiquidity = 'Initial liquidity cannot exceed 10 APT';
+      }
+    } catch {
+      errors.initialLiquidity = 'Enter a valid APT liquidity amount';
     }
 
     if (formData.feeRate < 0.1 || formData.feeRate > 5) {
@@ -132,7 +150,7 @@ export default function CreateMarketPage() {
 
       // Convert human values to u128 using proper conversion functions
       const probabilityU128 = probabilityToU128(formData.initialProbability);
-      const liquidityU128 = liquidityToU128(formData.initialLiquidity);
+      const liquidityU128 = liquidityValueAptToU128(formData.initialLiquidity);
 
       console.log('Converted values:', { probabilityU128, liquidityU128 });
 
@@ -150,7 +168,7 @@ export default function CreateMarketPage() {
             Array.from(new TextEncoder().encode(formData.question)),
             Array.from(new TextEncoder().encode(formData.description)),
             Array.from(new TextEncoder().encode(formData.category)),
-            formData.expirationDays * 24 * 60 * 60, // Convert days to seconds
+            formData.expirationMinutes * 60, // Convert minutes to seconds
             probabilityU128, // u128 FixedPoint128
             liquidityU128, // u128 FixedPoint128
             Math.floor(formData.feeRate * 100), // Basis points (u16)
@@ -394,19 +412,25 @@ export default function CreateMarketPage() {
 
                 <div>
                   <label className="flex items-center space-x-2 text-sm font-medium text-gray-300 mb-3">
-                    <Calendar className="w-4 h-4 text-cyan-400" />
-                    <span>Expiration (Days)</span>
+                    <Clock className="w-4 h-4 text-cyan-400" />
+                    <span>Expiration (Minutes)</span>
                   </label>
                   <input
                     type="number"
-                    value={formData.expirationDays}
-                    onChange={(e) => handleInputChange('expirationDays', parseInt(e.target.value) || 0)}
+                    value={formData.expirationMinutes}
+                    onChange={(e) => handleInputChange('expirationMinutes', parseInt(e.target.value) || 0)}
                     className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-white focus:outline-none focus:border-cyan-500/50 transition-all duration-300"
-                    min="1"
-                    max="365"
+                    min={formData.isDynamic ? 6 : 1}
+                    max={10080}
+                    step="1"
                   />
-                  {validationErrors.expirationDays && (
-                    <span className="text-xs text-red-400 mt-2 block">{validationErrors.expirationDays}</span>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Dynamic markets spend the first 5 minutes collecting liquidity before trading begins.
+                  </p>
+                  {validationErrors.expirationMinutes && (
+                    <span className="text-xs text-red-400 mt-2 block">
+                      {validationErrors.expirationMinutes}
+                    </span>
                   )}
                 </div>
               </div>
@@ -440,22 +464,25 @@ export default function CreateMarketPage() {
                 <div>
                   <label className="flex items-center space-x-2 text-sm font-medium text-gray-300 mb-3">
                     <DollarSign className="w-4 h-4 text-cyan-400" />
-                    <span>Initial Liquidity (Octa)</span>
+                    <span>Initial Liquidity Value (APT)</span>
                   </label>
                   <div className="relative">
                     <input
                       type="number"
                       value={formData.initialLiquidity}
-                      onChange={(e) => handleInputChange('initialLiquidity', parseFloat(e.target.value) || 0)}
+                      onChange={(e) => handleInputChange('initialLiquidity', e.target.value)}
                       className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-white text-2xl font-bold focus:outline-none focus:border-cyan-500/50 transition-all duration-300"
-                      min="10"
-                      max="1000000000"
-                      step="10"
+                      min="0.001"
+                      max="10"
+                      step="0.001"
                     />
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg font-bold text-sm">
-                      Octa
+                      APT
                     </div>
                   </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Collateral value used to initialize the PM-AMM reserves.
+                  </p>
                   {validationErrors.initialLiquidity && (
                     <span className="text-xs text-red-400 mt-2 block">{validationErrors.initialLiquidity}</span>
                   )}
@@ -527,9 +554,8 @@ export default function CreateMarketPage() {
                       </div>
                       <p className="text-sm text-gray-400">
                         {formData.isDynamic
-                          ? 'Provides automatic loss protection through time-based withdrawals'
-                          : 'Traditional constant liquidity pool'
-                        }
+                          ? 'Liquidity is collected before trading begins, then the pricing liquidity parameter decays over the live trading window.'
+                          : 'Static pool with a fixed liquidity parameter throughout the market lifetime.'}
                       </p>
                     </div>
                     <button
