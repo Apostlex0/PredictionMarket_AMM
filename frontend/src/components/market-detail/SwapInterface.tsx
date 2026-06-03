@@ -10,7 +10,6 @@ import {
   getSwapQuote,
   buildBuyYesPayload,
   buildBuyNoPayload,
-  formatBalance,
   u128ToNumber
 } from '@/lib/aptos_service';
 import { outcomeToRaw, formatOutcome } from '@/lib/amounts';
@@ -37,6 +36,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
   // Quote and balance state
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [balances, setBalances] = useState<RawSwapBalances>({ yes: '0', no: '0' });
+  const [balancesReady, setBalancesReady] = useState(false);
   
   // UI state
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
@@ -45,40 +45,43 @@ export default function SwapInterface2({ market }: { market: Market }) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [slippageTolerance, setSlippageTolerance] = useState(0.5); // 0.5%
 
-  // Load user balances when wallet connects
+  // Load real user balances. Failed reads never fall back to fabricated funds.
   useEffect(() => {
     const loadBalances = async () => {
       if (!connected || !account) {
         setBalances({ yes: '0', no: '0' });
+        setBalancesReady(false);
         return;
       }
+
+      setBalancesReady(false);
 
       try {
         const result = await getUserBalances(
           account.address.toString(),
           market.poolAddress
         );
-        
-        if (result) {
-          setBalances({
-            yes: result.yes,
-            no: result.no,
-          });
-        } else {
-          // Mock balances for development
-          setBalances({
-            yes: '500000000', // 5 YES tokens (8 decimals)
-            no: '300000000',  // 3 NO tokens (8 decimals)
-          });
+
+        if (!result) {
+          throw new Error('Balance view returned no data');
         }
+
+        setBalances({
+          yes: result.yes,
+          no: result.no,
+        });
+        setBalancesReady(true);
       } catch (err) {
         console.error('Error loading balances:', err);
-        setBalances({ yes: '500000000', no: '300000000' });
+        setBalances({ yes: '0', no: '0' });
+        setBalancesReady(false);
+        setQuote(null);
+        setError('Unable to load your on-chain YES/NO balances. Trading is disabled until balances are available.');
       }
     };
 
-    loadBalances();
-  }, [connected, account, market]);
+    void loadBalances();
+  }, [connected, account, market.poolAddress]);
 
   // Get swap quote when amount changes
   useEffect(() => {
@@ -108,23 +111,18 @@ export default function SwapInterface2({ market }: { market: Market }) {
           isXToY
         );
 
-        if (result) {
-          setQuote({
-            outputAmount: result.outputAmount,
-            priceImpact: u128ToNumber(result.priceImpact),
-          });
-        } else {
-          // Fallback to mock calculation - use integer arithmetic to avoid floating point errors
-          const probabilityBasisPoints = BigInt(Math.round(market.probability * 10_000));
-          const outputFactor = fromToken === 'YES'
-            ? 10_000n - probabilityBasisPoints
-            : probabilityBasisPoints;
-          const mockOutputRaw = (BigInt(amountInRaw) * outputFactor) / 10_000n;
-          setQuote({
-            outputAmount: mockOutputRaw.toString(),
-            priceImpact: 0.025, // 2.5%
-          });
+        if (!result) {
+          setQuote(null);
+          setError(
+            'Unable to get an executable on-chain quote. Trading may not be active for this market yet.'
+          );
+          return;
         }
+
+        setQuote({
+          outputAmount: result.outputAmount,
+          priceImpact: u128ToNumber(result.priceImpact),
+        });
       } catch (err) {
         console.error('Error getting swap quote:', err);
         setQuote(null);
@@ -140,8 +138,18 @@ export default function SwapInterface2({ market }: { market: Market }) {
 
   // Execute swap transaction using contract service functions
   const handleSwap = async () => {
-    if (!quote || !amount || parseFloat(amount) <= 0 || !connected || !account) {
-      setError('Please connect wallet and enter valid amount');
+    if (!connected || !account) {
+      setError('Please connect your wallet.');
+      return;
+    }
+
+    if (!balancesReady) {
+      setError('Unable to verify your on-chain token balance. Trading is disabled.');
+      return;
+    }
+
+    if (!quote || !amount || parseFloat(amount) <= 0) {
+      setError('Enter a valid amount and wait for an executable quote.');
       return;
     }
 
@@ -195,12 +203,18 @@ export default function SwapInterface2({ market }: { market: Market }) {
               market.poolAddress
             );
             
-            if (result) {
-              setBalances({
-                yes: result.yes,
-                no: result.no,
-              });
+            if (!result) {
+              setBalances({ yes: '0', no: '0' });
+              setBalancesReady(false);
+              setError('Swap submitted, but refreshed on-chain balances could not be loaded.');
+              return;
             }
+
+            setBalances({
+              yes: result.yes,
+              no: result.no,
+            });
+            setBalancesReady(true);
           } catch (err) {
             console.error('Error refreshing balances:', err);
           }
@@ -566,6 +580,7 @@ export default function SwapInterface2({ market }: { market: Market }) {
           onClick={handleSwap}
           disabled={
             !connected || 
+            !balancesReady ||
             !quote || 
             !amount || 
             !hasValidPositiveAmount|| 
@@ -578,12 +593,12 @@ export default function SwapInterface2({ market }: { market: Market }) {
               ? 'bg-gray-600 cursor-not-allowed'
               : 'bg-gradient-to-r from-cyan-500 via-blue-500 via-purple-500 to-pink-500 hover:from-cyan-400 hover:via-blue-400 hover:via-purple-400 hover:to-pink-400 shadow-cyan-500/30'
           }`}
-          whileHover={!connected || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { 
+          whileHover={!connected || !quote ||  !balancesReady || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { 
             scale: 1.02, 
             boxShadow: "0 25px 50px -12px rgba(6, 182, 212, 0.5)",
             borderColor: "rgba(255, 255, 255, 0.3)"
           }}
-          whileTap={!connected || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { scale: 0.98 }}
+          whileTap={!connected || !balancesReady || !quote || !amount || !hasValidPositiveAmount || insufficientBalance || isExecutingSwap || isLoadingQuote ? {} : { scale: 0.98 }}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.6 }}
@@ -604,6 +619,11 @@ export default function SwapInterface2({ market }: { market: Market }) {
               <>
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                 <span className="tracking-wide">Getting Quote...</span>
+              </>
+            ) : connected && !balancesReady ? (
+              <>
+                <AlertCircle className="w-5 h-5" />
+                <span className="tracking-wide">Balances Unavailable</span>
               </>
             ) : insufficientBalance ? (
               <>
