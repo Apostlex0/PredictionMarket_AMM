@@ -1,5 +1,5 @@
 [package]
-name = "run_script"
+name = "pm_amm"
 version = "1.0.0"
 authors = []
 
@@ -9,7 +9,7 @@ authors = []
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
-rev = "mainnet"
+rev = "af263064d06de76969d5d63f8ceb99aa9883d58e"
 subdir = "aptos-framework"
 
 [dev-dependencies]

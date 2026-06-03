@@ -146,9 +146,6 @@ module pm_amm::normal_dist {
             return fixed_point::zero() 
         };
 
-        let half = fixed_point::half();
-        let is_lower_tail = fixed_point::less_than(p, &half);
-        
         // Get the signed result
         let result_signed = inverse_cdf_signed(p);
         

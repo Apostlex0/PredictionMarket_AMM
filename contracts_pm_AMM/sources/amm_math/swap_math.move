@@ -1,5 +1,5 @@
 module pm_amm::swap_math {
-    use pm_amm::fixed_point::{Self, FixedPoint128};
+    use pm_amm::fixed_point::FixedPoint128;
     use pm_amm::invariant_amm;
 
     const E_INSUFFICIENT_OUTPUT: u64 = 601;

@@ -1,5 +1,5 @@
 module pm_amm::liquidity_manager {
-    use pm_amm::fixed_point::{Self, FixedPoint128};
+    use pm_amm::fixed_point::FixedPoint128;
 
     const E_INSUFFICIENT_LIQUIDITY: u64 = 700;
     const E_INVALID_LP_AMOUNT: u64 = 701;

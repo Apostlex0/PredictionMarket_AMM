@@ -1,5 +1,5 @@
 module pm_amm::swap_engine {
-    use pm_amm::fixed_point::{Self, FixedPoint128};
+    use pm_amm::fixed_point::FixedPoint128;
 
     const E_INSUFFICIENT_INPUT: u64 = 600;
     const E_INSUFFICIENT_OUTPUT: u64 = 601;
