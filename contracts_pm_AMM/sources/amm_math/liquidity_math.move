@@ -90,7 +90,13 @@ module pm_amm::liquidity_math {
         (required_x, required_y, lp_tokens, liquidity_L)
     }
 
-    /// PM-AMM liquidity addition - maintains optimal reserves for current price
+    /// PM-AMM liquidity addition using proportional scaling of the actual
+    /// stored pool state.
+    ///
+    /// A liquidity-only operation must not reprice the market. Scaling
+    /// reserves and L by the same factor preserves the current price and
+    /// preserves any fixed-point/rounding residual already present in the
+    /// stored reserves.
     public fun add_liquidity_pm_amm(
         desired_value_increase: &FixedPoint128,
         current_reserve_x: u64,
@@ -98,36 +104,81 @@ module pm_amm::liquidity_math {
         current_L: &FixedPoint128,
         current_lp_supply: u128
     ): (u64, u64, u64, u64, u128, FixedPoint128) {
-        // 1. Calculate current market price from reserves
-        let current_price = invariant_amm::calculate_marginal_price(
-            current_reserve_x, current_reserve_y, current_L
+        assert!(
+            fixed_point::greater_than(desired_value_increase, &fixed_point::zero()),
+            E_ZERO_LIQUIDITY
+        );
+        assert!(current_lp_supply > 0, E_INVALID_LP_AMOUNT);
+
+        // Value the actual stored pool at its current marginal price.
+        let current_pool_value = calculate_current_pool_value(
+            current_reserve_x,
+            current_reserve_y,
+            current_L
         );
 
-        // 2. Calculate required liquidity increase for desired value increase
-        let liquidity_increase = calculate_required_liquidity_increase(
-            desired_value_increase, &current_price
+        assert!(
+            fixed_point::greater_than(&current_pool_value, &fixed_point::zero()),
+            E_INVALID_POOL_VALUE
         );
 
-        // 3. Calculate new total liquidity parameter
-        let new_L = fixed_point::add(current_L, &liquidity_increase);
-
-        // 4. Calculate optimal reserves for current price with new L
-        let (optimal_new_x, optimal_new_y) = invariant_amm::calculate_optimal_reserves(
-            &current_price, &new_L
+        // ratio = ΔV / V
+        let contribution_ratio = fixed_point::div(
+            desired_value_increase,
+            &current_pool_value
         );
 
-        // 5. Calculate required token amounts (with underflow protection)
-        assert!(optimal_new_x >= current_reserve_x, E_INSUFFICIENT_LIQUIDITY);
-        assert!(optimal_new_y >= current_reserve_y, E_INSUFFICIENT_LIQUIDITY);
-        let required_x = optimal_new_x - current_reserve_x;
-        let required_y = optimal_new_y - current_reserve_y;
-
-        // 6. Calculate LP tokens based on liquidity increase
-        let lp_tokens = calculate_lp_tokens_from_liquidity_increase(
-            &liquidity_increase, current_L, current_lp_supply
+        // scale = (V + ΔV) / V = 1 + ratio
+        let scale = fixed_point::add(
+            &fixed_point::one(),
+            &contribution_ratio
         );
 
-        (required_x, required_y, optimal_new_x, optimal_new_y, lp_tokens, new_L)
+        // Scale actual stored reserves rather than reconstructing reserves
+        // through inverse-CDF/CDF approximations.
+        let new_reserve_x = fixed_point::to_u64(
+            &fixed_point::mul(
+                &fixed_point::from_u64(current_reserve_x),
+                &scale
+            )
+        );
+        let new_reserve_y = fixed_point::to_u64(
+            &fixed_point::mul(
+                &fixed_point::from_u64(current_reserve_y),
+                &scale
+            )
+        );
+
+        assert!(new_reserve_x >= current_reserve_x, E_INSUFFICIENT_LIQUIDITY);
+        assert!(new_reserve_y >= current_reserve_y, E_INSUFFICIENT_LIQUIDITY);
+
+        let required_x = new_reserve_x - current_reserve_x;
+        let required_y = new_reserve_y - current_reserve_y;
+
+        assert!(required_x > 0 || required_y > 0, E_ZERO_LIQUIDITY);
+
+        // Scaling L by the same factor preserves x/L and y/L, and therefore
+        // preserves the current PM-AMM marginal price.
+        let new_L = fixed_point::mul(current_L, &scale);
+
+        // LP ownership grows by the same value-contribution proportion.
+        let lp_tokens = fixed_point::to_u128(
+            &fixed_point::mul(
+                &contribution_ratio,
+                &fixed_point::from_u128(current_lp_supply)
+            )
+        );
+
+        assert!(lp_tokens > 0, E_MINIMUM_LIQUIDITY);
+
+        (
+            required_x,
+            required_y,
+            new_reserve_x,
+            new_reserve_y,
+            lp_tokens,
+            new_L
+        )
     }
 
     // ===== Remove Liquidity (PM-AMM) =====

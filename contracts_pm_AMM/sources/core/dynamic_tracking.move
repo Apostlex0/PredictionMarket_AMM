@@ -23,14 +23,14 @@ module pm_amm::dynamic_tracking {
         total_cumulative_withdrawals: FixedPoint128,
     }
 
-    /// Initialize dynamic tracking when trading starts
     public fun initialize_dynamic_tracking(
         account: &signer,
-        initial_pool_value: FixedPoint128
+        initial_pool_value: FixedPoint128,
+        trading_start_timestamp: u64
     ) {
         let tracking = DynamicPoolState {
             initial_pool_value,
-            trading_start_timestamp: timestamp::now_seconds(),
+            trading_start_timestamp,
             cumulative_withdrawals: table::new(),
             last_withdrawal_timestamp: table::new(),
             total_cumulative_withdrawals: fixed_point::zero(),
