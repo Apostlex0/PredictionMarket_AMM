@@ -1069,6 +1069,29 @@ module pm_amm::prediction_market {
         m.liquidity_period_ends_at
     }
 
+        /// Frontend runtime configuration for a prediction market.
+    ///
+    /// Returns:
+    /// - whether the market uses dynamic liquidity,
+    /// - swap fee in basis points,
+    /// - dynamic pretrade liquidity deadline, if one exists.
+    public fun get_market_runtime_config<YesToken, NoToken>(
+        market_addr: address
+    ): (bool, u16, Option<u64>) acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+
+        (
+            pool_state::is_dynamic(&m.pool),
+            m.fee_bps,
+            m.liquidity_period_ends_at
+        )
+    }
+
 
     /// Complete position settlement after market resolution 
     public fun settle_tokens_with_collateral<YesToken, NoToken>(

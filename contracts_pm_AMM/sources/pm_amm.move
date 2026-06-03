@@ -260,6 +260,13 @@ public fun get_market_reserves<YesToken, NoToken>(
 }
 
 #[view]
+public fun get_market_runtime_config<YesToken, NoToken>(
+    market_addr: address
+): (bool, u16, Option<u64>) {
+    prediction_market::get_market_runtime_config<YesToken, NoToken>(market_addr)
+}
+
+#[view]
 public fun get_user_prediction_balances<YesToken, NoToken>(
     user_addr: address, market_addr: address
 ): (u64, u64) {
