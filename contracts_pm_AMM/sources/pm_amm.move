@@ -6,9 +6,6 @@ module pm_amm::pm_amm {
     use aptos_framework::timestamp;
 
     use pm_amm::fixed_point::{Self, FixedPoint128};
-    use pm_amm::pool_state::{Self};
-    use pm_amm::swap_engine::{Self};
-    use pm_amm::invariant_amm;
     use pm_amm::prediction_market;
 
     // ===== Error Codes =====
@@ -87,7 +84,7 @@ module pm_amm::pm_amm {
         initial_probability: u128, // Raw FixedPoint128
         initial_liquidity: u128, // Changed to u128 for raw FixedPoint128
         fee_rate: u16,
-        resolution_source: vector<u8>,
+        _resolution_source: vector<u8>,
         is_dynamic: bool,
     ) acquires ProtocolConfig, PoolRegistry {
         assert_not_paused();
@@ -98,6 +95,7 @@ module pm_amm::pm_amm {
         // Calculate initial reserves based on probability
         // Convert initial_liquidity to total pool value for PM-AMM
         let total_pool_value = fixed_point::from_raw(initial_liquidity); // Use from_raw for consistency
+        let market_addr = prediction_market::next_market_address(signer::address_of(creator));
 
         let _market_id = prediction_market::create_market<YesToken, NoToken, Collateral>(
             creator,
@@ -117,7 +115,7 @@ module pm_amm::pm_amm {
         config.total_markets_created = config.total_markets_created + 1;
 
         // Register as a pool
-        register_pool<YesToken, NoToken>(signer::address_of(creator), true);
+        register_pool<YesToken, NoToken>(market_addr, true);
     }
 
     /// Mint prediction tokens by depositing APT collateral
@@ -149,19 +147,32 @@ module pm_amm::pm_amm {
         prediction_market::buy_no<YesToken, NoToken>(buyer, market_addr, amount_in_yes, min_out_no);
     }
 
+    /// Add liquidity through the path valid for this market type.
+    ///
+    /// Static markets use normal PM-AMM addition.
+    /// Dynamic markets accept additions only during their pretrade
+    /// liquidity-collection phase.
     public entry fun add_market_liquidity<YesToken, NoToken>(
         provider: &signer,
         market_addr: address,
-        desired_value_increase_raw: u128  // Raw FixedPoint128 value
+        desired_value_increase_raw: u128
     ) {
-        // Use raw value directly as FixedPoint128
-        let desired_value_increase = fixed_point::from_raw(desired_value_increase_raw);
-        //prediction_market::add_liquidity<YesToken, NoToken>(provider, market_addr, desired_value_increase);
-         prediction_market::add_pretrade_liquidity<YesToken, NoToken>(
-                provider, 
-                market_addr, 
+        let desired_value_increase =
+            fixed_point::from_raw(desired_value_increase_raw);
+
+        if (prediction_market::is_dynamic_market<YesToken, NoToken>(market_addr)) {
+            prediction_market::add_pretrade_liquidity<YesToken, NoToken>(
+                provider,
+                market_addr,
                 desired_value_increase
             );
+        } else {
+            prediction_market::add_liquidity<YesToken, NoToken>(
+                provider,
+                market_addr,
+                desired_value_increase
+            );
+        };
     }
 
     /// Remove liquidity from a prediction market
@@ -207,11 +218,16 @@ public fun is_paused(): bool acquires ProtocolConfig {
 
 
 #[view]
-public fun get_swap_quote<X, Y>(
-    pool_owner: address, amount_in: u64, is_x_to_y: bool
+public fun get_swap_quote<YesToken, NoToken>(
+    market_addr: address,
+    amount_in: u64,
+    is_x_to_y: bool
 ): (u64, FixedPoint128) {
-    assert!(pool_state::pool_exists<X, Y>(pool_owner), E_NOT_INITIALIZED);
-    pool_state::get_swap_quote_friend<X, Y>(pool_owner, amount_in, is_x_to_y)
+    prediction_market::get_swap_quote<YesToken, NoToken>(
+        market_addr,
+        amount_in,
+        is_x_to_y
+    )
 }
 
 // ===== Prediction Market View Functions =====

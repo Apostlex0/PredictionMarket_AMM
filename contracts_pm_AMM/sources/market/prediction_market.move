@@ -1,4 +1,5 @@
 module pm_amm::prediction_market {
+    use std::bcs;
     use std::option::{Self, Option};
     use std::signer;
     use std::vector;
@@ -6,7 +7,7 @@ module pm_amm::prediction_market {
     use aptos_framework::timestamp;
     use aptos_framework::event::{Self, EventHandle};
     use aptos_framework::account;
-    use aptos_framework::fungible_asset::{Self as fa, MintRef, BurnRef, TransferRef, Metadata, FungibleStore};
+    use aptos_framework::fungible_asset::{Self as fa};
     use aptos_framework::primary_fungible_store as pfs;
     use aptos_framework::object::{Self, Object};
     
@@ -56,7 +57,9 @@ module pm_amm::prediction_market {
     const SCALE_FEES: u128 = 1_000_000_000_000;
     /// Default liquidity period for dynamic pools (in seconds)
     /// LPs have this much time to add liquidity before trading can start
-    const DEFAULT_LIQUIDITY_PERIOD_SECONDS: u64 = 3600; // 1 hour
+    const DEFAULT_LIQUIDITY_PERIOD_SECONDS: u64 = 300; // 5 minutes
+    /// Dynamic market must retain a positive live-trading window after pretrade liquidity collection.
+    const E_DYNAMIC_MARKET_DURATION_TOO_SHORT: u64 = 9016;
 
         // ===== Events =====
     struct MarketCreatedEvent has drop, store {
@@ -191,11 +194,29 @@ module pm_amm::prediction_market {
         pool_state::update_reserves(&mut m.pool, actual_yes_balance, actual_no_balance, 0, 0);
     }
         
-        /// Helper function to create FA tokens for a market
-    
-        fun create_market_tokens(
+    fun market_seed(prefix: vector<u8>, market_id: u64): vector<u8> {
+        let seed = prefix;
+        vector::append(&mut seed, bcs::to_bytes(&market_id));
+        seed
+    }
+
+    public fun next_market_address(creator_addr: address): address acquires MarketRegistry {
+        let market_id = if (exists<MarketRegistry>(creator_addr)) {
+            borrow_global<MarketRegistry>(creator_addr).next_market_id
+        } else {
+            1
+        };
+
+        account::create_resource_address(
+            &creator_addr,
+            market_seed(b"prediction_market", market_id)
+        )
+    }
+
+    /// Helper function to create FA tokens for a market
+    fun create_market_tokens(
         creator: &signer,
-        _market_id: u64,
+        market_id: u64,
         _question: &String
     ): (
         Object<fa::Metadata>, fa::MintRef, fa::BurnRef, fa::TransferRef, // YES
@@ -203,7 +224,10 @@ module pm_amm::prediction_market {
         Object<fa::Metadata>, fa::MintRef, fa::BurnRef, fa::TransferRef  // LP
     ) {
         // Create YES token
-        let yes_constructor_ref = &object::create_named_object(creator, b"YES_TOKEN");
+        let yes_constructor_ref = &object::create_named_object(
+            creator,
+            market_seed(b"YES_TOKEN", market_id)
+        );
         pfs::create_primary_store_enabled_fungible_asset(
             yes_constructor_ref,
             option::none(), // unlimited supply
@@ -220,7 +244,10 @@ module pm_amm::prediction_market {
         let yes_transfer_ref = fa::generate_transfer_ref(yes_constructor_ref);
 
         // Create NO token 
-        let no_constructor_ref = &object::create_named_object(creator, b"NO_TOKEN");
+        let no_constructor_ref = &object::create_named_object(
+            creator,
+            market_seed(b"NO_TOKEN", market_id)
+        );
         pfs::create_primary_store_enabled_fungible_asset(
             no_constructor_ref, option::none(), string::utf8(b"NO Token"),
             string::utf8(b"NO"), 8, string::utf8(b""), string::utf8(b"")
@@ -231,7 +258,10 @@ module pm_amm::prediction_market {
         let no_transfer_ref = fa::generate_transfer_ref(no_constructor_ref);
 
         // Create LP token 
-        let lp_constructor_ref = &object::create_named_object(creator, b"LP_TOKEN");
+        let lp_constructor_ref = &object::create_named_object(
+            creator,
+            market_seed(b"LP_TOKEN", market_id)
+        );
         pfs::create_primary_store_enabled_fungible_asset(
             lp_constructor_ref, option::none(), string::utf8(b"LP Token"),
             string::utf8(b"LP"), 8, string::utf8(b""), string::utf8(b"")
@@ -289,18 +319,52 @@ module pm_amm::prediction_market {
         lp_metadata, lp_mint_ref, lp_burn_ref, lp_transfer_ref) = 
         create_market_tokens(creator, market_id, &question);
 
-        // Calculate optimal L and reserves using PM-AMM math
-        let (required_x_yes, required_y_no, _lp_tokens, liquidity_L) = 
-            liquidity_math::add_initial_liquidity_pm_amm(&initial_probability, &total_pool_value);
+        // Calculate optimal L and reserves using PM-AMM math.
+        let (required_x_yes, required_y_no, _lp_tokens, liquidity_L) =
+            liquidity_math::add_initial_liquidity_pm_amm(
+                &initial_probability,
+                &total_pool_value
+            );
 
-        // Pool - create with calculated optimal reserves and initial price cache
+        // Dynamic markets collect liquidity first and begin trading only after
+        // this deadline. The deadline is also the dynamic L-decay anchor.
+        let liquidity_period_ends_at = if (is_dynamic) {
+            let trading_start_timestamp =
+                now + DEFAULT_LIQUIDITY_PERIOD_SECONDS;
+
+            assert!(
+                expires_at > trading_start_timestamp,
+                E_DYNAMIC_MARKET_DURATION_TOO_SHORT
+            );
+
+            option::some(trading_start_timestamp)
+        } else {
+            option::none()
+        };
+
+        // Pool creation uses the calculated reserves and initial price cache.
         let pool = if (is_dynamic) {
+            let trading_start_timestamp =
+                *option::borrow(&liquidity_period_ends_at);
+
             pool_state::create_dynamic_pool<YesToken, NoToken>(
-                required_x_yes, required_y_no, liquidity_L, expires_at, /*fee*/ fee_bps, owner, initial_probability
+                required_x_yes,
+                required_y_no,
+                liquidity_L,
+                expires_at,
+                trading_start_timestamp,
+                fee_bps,
+                owner,
+                initial_probability
             )
         } else {
             pool_state::create_static_pool<YesToken, NoToken>(
-                required_x_yes, required_y_no, liquidity_L, /*fee*/ fee_bps, owner, initial_probability
+                required_x_yes,
+                required_y_no,
+                liquidity_L,
+                fee_bps,
+                owner,
+                initial_probability
             )
         };
 
@@ -310,7 +374,10 @@ module pm_amm::prediction_market {
         let apt_metadata = object::address_to_object<fa::Metadata>(@0xa);
         
         // Create market authority (resource account for controlling APT)
-        let (market_signer, market_signer_cap) = account::create_resource_account(creator, b"prediction_market");
+        let (market_signer, market_signer_cap) = account::create_resource_account(
+            creator,
+            market_seed(b"prediction_market", market_id)
+        );
 
         // Back the initial redeemable outcome token inventory.
         //
@@ -335,9 +402,17 @@ module pm_amm::prediction_market {
         };
 
         
-        // Initialize dynamic tracking for dynamic pools
+        // Initialize dynamic tracking against the same timestamp at which
+        // trading and dynamic liquidity decay begin.
         if (is_dynamic) {
-            dynamic_tracking::initialize_dynamic_tracking(&market_signer, total_pool_value);
+            let trading_start_timestamp =
+                *option::borrow(&liquidity_period_ends_at);
+
+            dynamic_tracking::initialize_dynamic_tracking(
+                &market_signer,
+                total_pool_value,
+                trading_start_timestamp
+            );
         };
         
         // Create proper FA stores for reserves and fee vaults
@@ -356,13 +431,6 @@ module pm_amm::prediction_market {
         
         let no_fee_vault_constructor = &object::create_object_from_account(creator);
         let no_fee_vault = fa::create_store(no_fee_vault_constructor, no_metadata);
-
-        // Calculate liquidity period end time for dynamic pools
-        let liquidity_period_ends_at = if (is_dynamic) {
-            option::some(now + DEFAULT_LIQUIDITY_PERIOD_SECONDS)
-        } else {
-            option::none()
-        };
 
         let m = PredictionMarket<YesToken, NoToken> {
             market_id, creator: owner, question, description, category,
@@ -421,7 +489,7 @@ module pm_amm::prediction_market {
         event::emit_event(&mut m.ev_created, MarketCreatedEvent {
             market_id, creator: owner, question: question_copy, expires_at, initial_probability_raw: fixed_point::raw_value(&initial_probability), fee_bps
         });
-        move_to(creator, m);
+        move_to(&market_signer, m);
 
         vector::push_back(&mut reg.markets, market_id);
         vector::push_back(&mut reg.active_markets, market_id);
@@ -519,11 +587,66 @@ module pm_amm::prediction_market {
     public fun market_exists<YesToken, NoToken>(market_addr: address): bool {
         exists<PredictionMarket<YesToken, NoToken>>(market_addr)
     }
+        /// Returns whether this prediction market uses dynamic liquidity.
+    public fun is_dynamic_market<YesToken, NoToken>(
+        market_addr: address
+    ): bool acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        pool_state::is_dynamic(&m.pool)
+    }
     
     /// Get APT metadata object (helper function)
     public fun apt_metadata(): Object<fa::Metadata> {
         object::address_to_object<fa::Metadata>(@0xa)
     }  
+
+    /// Quote a prediction-market swap using the market's embedded pool.
+    ///
+    /// YES = X and NO = Y:
+    /// - is_x_to_y = true  => YES -> NO
+    /// - is_x_to_y = false => NO -> YES
+    ///
+    /// The validation mirrors buy_yes / buy_no so the quote represents
+    /// an executable trade under the current market phase.
+    public fun get_swap_quote<YesToken, NoToken>(
+        market_addr: address,
+        amount_in: u64,
+        is_x_to_y: bool
+    ): (u64, FixedPoint128) acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+        assert!(amount_in > 0, E_ZERO);
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+
+        assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
+        assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
+
+        // Dynamic markets are quoteable only once their trading phase begins,
+        // exactly like buy_yes / buy_no.
+        if (pool_state::is_dynamic(&m.pool)) {
+            if (option::is_some(&m.liquidity_period_ends_at)) {
+                let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+                assert!(
+                    timestamp::now_seconds() >= liquidity_deadline,
+                    E_LIQUIDITY_PERIOD_ENDED
+                );
+            };
+        };
+
+        pool_state::get_swap_quote_direct(
+            &m.pool,
+            amount_in,
+            is_x_to_y
+        )
+    }
 
     // ===== Trading =====
     // Users trade YES ↔ NO tokens through AMM, fees go to LP providers
@@ -543,7 +666,10 @@ module pm_amm::prediction_market {
         if (pool_state::is_dynamic(&m.pool)) {
             if (option::is_some(&m.liquidity_period_ends_at)) {
                 let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
-                assert!(timestamp::now_seconds() > liquidity_deadline, E_LIQUIDITY_PERIOD_ENDED);
+                assert!(
+                    timestamp::now_seconds() >= liquidity_deadline,
+                    E_LIQUIDITY_PERIOD_ENDED
+                );
             };
         };
 
@@ -600,7 +726,10 @@ module pm_amm::prediction_market {
         if (pool_state::is_dynamic(&m.pool)) {
             if (option::is_some(&m.liquidity_period_ends_at)) {
                 let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
-                assert!(timestamp::now_seconds() > liquidity_deadline, E_LIQUIDITY_PERIOD_ENDED);
+                assert!(
+                    timestamp::now_seconds() >= liquidity_deadline,
+                    E_LIQUIDITY_PERIOD_ENDED
+                );
             };
         };
 
@@ -729,7 +858,7 @@ module pm_amm::prediction_market {
         // Check that we're still in the liquidity period (trading hasn't started)
         let is_market_active = if (option::is_some(&m.liquidity_period_ends_at)) {
             let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
-            timestamp::now_seconds() > liquidity_deadline
+            timestamp::now_seconds() >= liquidity_deadline
         } else {
             false // No deadline set, market not active yet
         };
@@ -772,98 +901,142 @@ module pm_amm::prediction_market {
     }
    
 
-    /// Remove liquidity and burn LP tokens
+    /// Remove liquidity and burn LP tokens.
+    ///
+    /// Live static markets use ordinary proportional AMM removal.
+    /// Resolved markets use terminal reserve withdrawal because the AMM no
+    /// longer prices trades after resolution.
+    ///
+    /// Dynamic markets are removable only after resolution.
     public fun remove_liquidity<YesToken, NoToken>(
-        provider: &signer, market_addr: address, lp_to_burn: u128
+        provider: &signer,
+        market_addr: address,
+        lp_to_burn: u128
     ) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
-        let who = signer::address_of(provider);
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
 
+        let who = signer::address_of(provider);
         let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
+
         assert!(lp_to_burn > 0, E_ZERO);
 
-         // For dynamic pools, restrict liquidity removal until market is resolved
-        if (pool_state::is_dynamic(&m.pool)) {
-            assert!(m.resolved, E_DYNAMIC_LP_REMOVAL_BEFORE_RESOLUTION);
-        };
+        let is_dynamic = pool_state::is_dynamic(&m.pool);
 
-        // Process automatic withdrawals for dynamic pools first
-        if (pool_state::is_dynamic(&m.pool)) {
-            let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
-            if (dynamic_tracking::tracking_exists(market_signer_addr)) {
-                let acc_temp = load_lp_acc(&mut m.lp_accounts, who);
-                let (x_withdraw, y_withdraw, _dollar_value) = 
-                    dynamic_tracking::process_automatic_withdrawal<YesToken, NoToken>(
-                        market_signer_addr, who, acc_temp.lp_balance
-                    );
-                
-                // Transfer withdrawn tokens to provider
-                let provider_yes_store = pfs::ensure_primary_store_exists(who, m.yes_metadata);
-                let provider_no_store = pfs::ensure_primary_store_exists(who, m.no_metadata);
-                
-                if (x_withdraw > 0) {
-                    let yes_out = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_reserve, x_withdraw);
-                    fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_out);
-                };
-                if (y_withdraw > 0) {
-                    let no_out = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_reserve, y_withdraw);
-                    fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_out);
-                };
-            };
+        // Dynamic liquidity remains locked while the market is live.
+        if (is_dynamic) {
+            assert!(m.resolved, E_DYNAMIC_LP_REMOVAL_BEFORE_RESOLUTION);
         };
 
         let acc = load_lp_acc(&mut m.lp_accounts, who);
         assert!(acc.lp_balance >= lp_to_burn, E_INSUFF_LP);
 
-        // Calculate and distribute fees BEFORE burning LP tokens
         let total_lp_supply = pool_state::get_lp_supply(&m.pool);
-        let lp_ratio = fixed_point::from_fraction((lp_to_burn as u64), (total_lp_supply as u64));
-        
-        // Get total fees available in vaults
+        assert!(total_lp_supply > 0, E_INSUFF_LP);
+        assert!(lp_to_burn <= total_lp_supply, E_INSUFF_LP);
+
+        let lp_ratio = fixed_point::from_fraction(
+            lp_to_burn as u64,
+            total_lp_supply as u64
+        );
+
+        // Fee vaults are distributed according to the LP amount being burned.
         let total_yes_fees = fa::balance(m.yes_fee_vault);
         let total_no_fees = fa::balance(m.no_fee_vault);
-        
-        // Calculate this LP's share of fees for the tokens being burned
-        let yes_fee_share = fixed_point::mul(&fixed_point::from_u64(total_yes_fees), &lp_ratio);
-        let no_fee_share = fixed_point::mul(&fixed_point::from_u64(total_no_fees), &lp_ratio);
-        
+
+        let yes_fee_share = fixed_point::mul(
+            &fixed_point::from_u64(total_yes_fees),
+            &lp_ratio
+        );
+        let no_fee_share = fixed_point::mul(
+            &fixed_point::from_u64(total_no_fees),
+            &lp_ratio
+        );
+
         let yes_fees_to_claim = fixed_point::to_u64(&yes_fee_share);
         let no_fees_to_claim = fixed_point::to_u64(&no_fee_share);
 
-        // Prepare provider stores for all transfers
-        let provider_yes_store = pfs::ensure_primary_store_exists(who, m.yes_metadata);
-        let provider_no_store = pfs::ensure_primary_store_exists(who, m.no_metadata);
+        let provider_yes_store =
+            pfs::ensure_primary_store_exists(who, m.yes_metadata);
+        let provider_no_store =
+            pfs::ensure_primary_store_exists(who, m.no_metadata);
 
-        // Distribute fees immediately when burning LP tokens
         if (yes_fees_to_claim > 0) {
-            let yes_fees = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_fee_vault, yes_fees_to_claim);
-            fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_fees);
+            let yes_fees = fa::withdraw_with_ref(
+                &m.yes_transfer_ref,
+                m.yes_fee_vault,
+                yes_fees_to_claim
+            );
+            fa::deposit_with_ref(
+                &m.yes_transfer_ref,
+                provider_yes_store,
+                yes_fees
+            );
         };
+
         if (no_fees_to_claim > 0) {
-            let no_fees = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_fee_vault, no_fees_to_claim);
-            fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_fees);
+            let no_fees = fa::withdraw_with_ref(
+                &m.no_transfer_ref,
+                m.no_fee_vault,
+                no_fees_to_claim
+            );
+            fa::deposit_with_ref(
+                &m.no_transfer_ref,
+                provider_no_store,
+                no_fees
+            );
         };
 
-        // Pool math for proportional liquidity removal
-        let (ax, ay) = pool_state::remove_liquidity_proportional_direct(&mut m.pool, lp_to_burn);
+        // A resolved market is terminal. Withdraw proportional physical
+        // reserves directly rather than invoking live AMM liquidity math.
+        let (yes_out_amount, no_out_amount) = if (m.resolved) {
+            pool_state::remove_liquidity_after_resolution_direct(
+                &mut m.pool,
+                lp_to_burn
+            )
+        } else {
+            pool_state::remove_liquidity_proportional_direct(
+                &mut m.pool,
+                lp_to_burn
+            )
+        };
 
-        // Update LP ledger and burn tokens
         acc.lp_balance = acc.lp_balance - lp_to_burn;
-        // Note: Pool already updated its lp_token_supply, no need to duplicate tracking
 
-        // Burn LP tokens from provider
         let provider_lp_store = pfs::primary_store(who, m.lp_metadata);
-        let lp_tokens = fa::withdraw(provider, provider_lp_store, (lp_to_burn as u64));
+        let lp_tokens = fa::withdraw(
+            provider,
+            provider_lp_store,
+            lp_to_burn as u64
+        );
         fa::burn(&m.lp_burn_ref, lp_tokens);
 
-        // Pay out proportional share from reserves
-        if (ax > 0) {
-            let yes_out = fa::withdraw_with_ref(&m.yes_transfer_ref, m.yes_reserve, ax);
-            fa::deposit_with_ref(&m.yes_transfer_ref, provider_yes_store, yes_out);
+        if (yes_out_amount > 0) {
+            let yes_out = fa::withdraw_with_ref(
+                &m.yes_transfer_ref,
+                m.yes_reserve,
+                yes_out_amount
+            );
+            fa::deposit_with_ref(
+                &m.yes_transfer_ref,
+                provider_yes_store,
+                yes_out
+            );
         };
-        if (ay > 0) {
-            let no_out = fa::withdraw_with_ref(&m.no_transfer_ref, m.no_reserve, ay);
-            fa::deposit_with_ref(&m.no_transfer_ref, provider_no_store, no_out);
+
+        if (no_out_amount > 0) {
+            let no_out = fa::withdraw_with_ref(
+                &m.no_transfer_ref,
+                m.no_reserve,
+                no_out_amount
+            );
+            fa::deposit_with_ref(
+                &m.no_transfer_ref,
+                provider_no_store,
+                no_out
+            );
         };
     }
 
@@ -883,7 +1056,7 @@ module pm_amm::prediction_market {
         // Check if liquidity period has ended
         if (option::is_some(&m.liquidity_period_ends_at)) {
             let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
-            timestamp::now_seconds() > liquidity_deadline
+            timestamp::now_seconds() >= liquidity_deadline
         } else {
             true // No liquidity period set
         }
@@ -975,97 +1148,128 @@ module pm_amm::prediction_market {
         pool_state::get_spot_price_direct(&mut m.pool)
     }
 
-    // ===== Dynamic Tracking Integration Functions =====
-    /// Get LP loss analytics for frontend display
-    /// Returns (total_wealth, pending_withdrawal, cumulative_withdrawn, current_loss)
+    /// Legacy analytics endpoint retained for API compatibility.
+    ///
+    /// The previous implementation exposed synthetic automatic-withdrawal
+    /// accounting that was not synchronized with physical pool reserves.
+    /// Automatic withdrawals are not an executable feature of the repaired
+    /// settlement path. Return zero synthetic analytics rather than exposing
+    /// unbacked or aborting values.
     public fun get_lp_loss_analytics<YesToken, NoToken>(
         market_addr: address,
-        lp_address: address,
-        lp_tokens: u128
-    ): (FixedPoint128, FixedPoint128, FixedPoint128, FixedPoint128) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
-        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
-        
-        let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
-        if (!pool_state::is_dynamic(&m.pool) || 
-            !dynamic_tracking::tracking_exists(market_signer_addr)) {
-            // Static pool or no tracking - no losses
-            let zero = fixed_point::zero();
-            return (zero, zero, zero, zero)
-        };
-        
-        // Get current wealth and pending withdrawals
-        let total_wealth = dynamic_tracking::calculate_lp_total_wealth<YesToken, NoToken>(
-            market_signer_addr, lp_address, lp_tokens
+        _lp_address: address,
+        _lp_tokens: u128
+    ): (FixedPoint128, FixedPoint128, FixedPoint128, FixedPoint128)
+    {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
         );
-        let pending_withdrawal = dynamic_tracking::calculate_pending_withdrawal<YesToken, NoToken>(
-            market_signer_addr, lp_address, lp_tokens
-        );
-        let cumulative_withdrawn = dynamic_tracking::get_cumulative_withdrawals(market_signer_addr, lp_address);
-        let initial_value = dynamic_tracking::get_initial_pool_value(market_signer_addr);
-        
-        // Calculate LP's initial contribution
-        let lp_supply = pool_state::get_lp_supply(&m.pool);
-        let lp_share = fixed_point::from_fraction((lp_tokens as u64), (lp_supply as u64));
-        let initial_contribution = fixed_point::mul(&lp_share, &initial_value);
-        
-        // Calculate current loss
-        let current_loss = fixed_point::sub(&initial_contribution, &total_wealth);
-        
-        (total_wealth, pending_withdrawal, cumulative_withdrawn, current_loss)
+
+        let zero = fixed_point::zero();
+        (zero, zero, zero, zero)
     }
 
-    /// Get final settlement with loss calculation (for resolved markets)
-    /// Returns (total_withdrawn, settlement_from_winning_tokens, total_loss)
+    /// Return executable terminal settlement information for a resolved LP
+    /// position.
+    ///
+    /// Automatic lifetime withdrawals are not part of the repaired settlement
+    /// model, so total_withdrawn is zero. Settlement equals the winning-token
+    /// portion of the exact remove-liquidity preview, including fee-vault
+    /// distributions. Historical loss is not tracked per LP and is returned
+    /// as zero rather than fabricated.
     public fun get_final_settlement_with_loss<YesToken, NoToken>(
         market_addr: address,
-        lp_address: address,
+        _lp_address: address,
         lp_tokens: u128
-    ): (FixedPoint128, FixedPoint128, FixedPoint128) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+    ): (FixedPoint128, FixedPoint128, FixedPoint128)
+    acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+
         let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
         assert!(m.resolved, E_MARKET_NOT_RESOLVED);
-        
-        let market_signer_addr = signer::address_of(&account::create_signer_with_capability(&m.market_signer_cap));
-        if (!pool_state::is_dynamic(&m.pool) || 
-            !dynamic_tracking::tracking_exists(market_signer_addr)) {
-            // Static pool - no dynamic losses
-            let zero = fixed_point::zero();
-            return (zero, zero, zero)
+
+        let outcome_yes = *option::borrow(&m.outcome_yes);
+
+        let (yes_out, no_out) =
+            preview_remove_liquidity<YesToken, NoToken>(
+                market_addr,
+                lp_tokens
+            );
+
+        let winning_tokens = if (outcome_yes) {
+            yes_out
+        } else {
+            no_out
         };
-        
-        let outcome_x_wins = *option::borrow(&m.outcome_yes);
-        dynamic_tracking::calculate_expiration_settlement<YesToken, NoToken>(
-            market_signer_addr, lp_address, lp_tokens, outcome_x_wins
+
+        (
+            fixed_point::zero(),
+            fixed_point::from_u64(winning_tokens),
+            fixed_point::zero()
         )
     }
 
-    /// Preview add liquidity without executing - returns (required_yes, required_no, lp_tokens, share_of_pool)
+    /// Preview add liquidity using the same path that public execution uses.
+    ///
+    /// Static markets preview normal PM-AMM liquidity addition.
+    /// Dynamic markets preview pretrade addition only while trading is inactive.
     public fun preview_add_liquidity<YesToken, NoToken>(
         market_addr: address,
         desired_value_increase: FixedPoint128
     ): (u64, u64, u128, FixedPoint128) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
-        assert!(fixed_point::greater_than(&desired_value_increase, &fixed_point::zero()), E_ZERO);
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+        assert!(
+            fixed_point::greater_than(&desired_value_increase, &fixed_point::zero()),
+            E_ZERO
+        );
 
         let m = borrow_global_mut<PredictionMarket<YesToken, NoToken>>(market_addr);
         assert!(!m.resolved, E_MARKET_ALREADY_RESOLVED);
         assert!(timestamp::now_seconds() < m.expires_at, E_MARKET_EXPIRED);
 
-        // Get current price for liquidity calculation
-        let current_price = pool_state::get_spot_price_direct(&mut m.pool);
-        
-        // Preview the liquidity addition
-        let outcome = pool_state::preview_add_liquidity_direct(&m.pool, &desired_value_increase, &current_price);
+        let outcome = if (pool_state::is_dynamic(&m.pool)) {
+            let is_market_active = if (option::is_some(&m.liquidity_period_ends_at)) {
+                let liquidity_deadline = *option::borrow(&m.liquidity_period_ends_at);
+                timestamp::now_seconds() >= liquidity_deadline
+            } else {
+                false
+            };
+
+            assert!(!is_market_active, E_TRADING_ALREADY_STARTED);
+
+            pool_state::preview_pretrade_liquidity(
+                &m.pool,
+                &desired_value_increase,
+                is_market_active
+            )
+        } else {
+            let current_price = pool_state::get_spot_price_direct(&mut m.pool);
+
+            pool_state::preview_add_liquidity_direct(
+                &m.pool,
+                &desired_value_increase,
+                &current_price
+            )
+        };
+
         let required_x = pool_state::get_actual_x(&outcome);
         let required_y = pool_state::get_actual_y(&outcome);
         let minted_lp = pool_state::get_minted_lp(&outcome);
 
-        // Calculate share of pool
         let current_lp_supply = pool_state::get_lp_supply(&m.pool);
         let total_lp_after = current_lp_supply + minted_lp;
         let share_of_pool = if (total_lp_after > 0) {
-            fixed_point::from_fraction((minted_lp as u64), (total_lp_after as u64))
+            fixed_point::from_fraction(
+                minted_lp as u64,
+                total_lp_after as u64
+            )
         } else {
             fixed_point::zero()
         };
@@ -1073,68 +1277,201 @@ module pm_amm::prediction_market {
         (required_x, required_y, minted_lp, share_of_pool)
     }
 
-    /// Preview remove liquidity without executing - returns (yes_tokens_out, no_tokens_out)
+    /// Preview remove liquidity without executing.
+    ///
+    /// Returns the exact YES and NO amounts transferred by remove_liquidity:
+    ///
+    ///     proportional reserve withdrawal + proportional accumulated fee share
+    ///
+    /// Dynamic pools are withdrawable only after resolution, matching execution.
     public fun preview_remove_liquidity<YesToken, NoToken>(
         market_addr: address,
         lp_tokens_to_burn: u128
     ): (u64, u64) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
         assert!(lp_tokens_to_burn > 0, E_ZERO);
 
         let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
-        
-        // Calculate proportional withdrawal based on current reserves
+
+        if (pool_state::is_dynamic(&m.pool)) {
+            assert!(m.resolved, E_DYNAMIC_LP_REMOVAL_BEFORE_RESOLUTION);
+        };
+
         let (reserve_x, reserve_y) = pool_state::get_reserves(&m.pool);
         let lp_supply = pool_state::get_lp_supply(&m.pool);
-        
-        let tokens_x_out = if (lp_supply > 0) {
-            ((reserve_x as u128) * lp_tokens_to_burn / lp_supply) as u64
+
+        assert!(lp_supply > 0, E_INSUFF_LP);
+        assert!(lp_tokens_to_burn <= lp_supply, E_INSUFF_LP);
+
+        let reserve_yes_out = if (lp_tokens_to_burn == lp_supply) {
+            reserve_x
         } else {
-            0
-        };
-        let tokens_y_out = if (lp_supply > 0) {
-            ((reserve_y as u128) * lp_tokens_to_burn / lp_supply) as u64
-        } else {
-            0
+            (
+                ((reserve_x as u128) * lp_tokens_to_burn)
+                    / lp_supply
+            ) as u64
         };
 
-        (tokens_x_out, tokens_y_out)
+        let reserve_no_out = if (lp_tokens_to_burn == lp_supply) {
+            reserve_y
+        } else {
+            (
+                ((reserve_y as u128) * lp_tokens_to_burn)
+                    / lp_supply
+            ) as u64
+        };
+
+        // Mirror remove_liquidity fee distribution exactly.
+        let lp_ratio = fixed_point::from_fraction(
+            lp_tokens_to_burn as u64,
+            lp_supply as u64
+        );
+
+        let total_yes_fees = fa::balance(m.yes_fee_vault);
+        let total_no_fees = fa::balance(m.no_fee_vault);
+
+        let yes_fee_share = fixed_point::mul(
+            &fixed_point::from_u64(total_yes_fees),
+            &lp_ratio
+        );
+        let no_fee_share = fixed_point::mul(
+            &fixed_point::from_u64(total_no_fees),
+            &lp_ratio
+        );
+
+        let yes_fees_out = fixed_point::to_u64(&yes_fee_share);
+        let no_fees_out = fixed_point::to_u64(&no_fee_share);
+
+        (
+            reserve_yes_out + yes_fees_out,
+            reserve_no_out + no_fees_out
+        )
     }
 
-    /// Get user's LP position - returns (lp_tokens, share_of_pool, yes_tokens_value, no_tokens_value)
+    /// Get user's LP position.
+    ///
+    /// A user who has never received LP tokens does not yet have a primary
+    /// fungible store for this market's LP asset. That is a valid zero-position
+    /// state and must return zero rather than abort.
     public fun get_user_lp_position<YesToken, NoToken>(
         user_addr: address,
         market_addr: address
     ): (u64, FixedPoint128, u64, u64) acquires PredictionMarket {
-        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
 
         let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
-        
-        // Get user's LP token balance
-        let lp_store = pfs::primary_store(user_addr, m.lp_metadata);
-        let user_lp_tokens = fa::balance(lp_store);
 
-        // Calculate share of pool
+        let user_lp_tokens = if (pfs::primary_store_exists(user_addr, m.lp_metadata)) {
+            let lp_store = pfs::primary_store(user_addr, m.lp_metadata);
+            fa::balance(lp_store)
+        } else {
+            0
+        };
+
         let total_lp_supply = pool_state::get_lp_supply(&m.pool);
+
         let share_of_pool = if (total_lp_supply > 0) {
-            fixed_point::from_fraction((user_lp_tokens as u64), (total_lp_supply as u64))
+            fixed_point::from_fraction(
+                user_lp_tokens,
+                total_lp_supply as u64
+            )
         } else {
             fixed_point::zero()
         };
 
-        // Calculate token values based on current reserves
         let (reserve_x, reserve_y) = pool_state::get_reserves(&m.pool);
+
         let user_yes_value = if (total_lp_supply > 0) {
-            (((reserve_x as u128) * (user_lp_tokens as u128)) / (total_lp_supply as u128)) as u64
+            (
+                ((reserve_x as u128) * (user_lp_tokens as u128))
+                    / total_lp_supply
+            ) as u64
         } else {
-            0u64
+            0
         };
+
         let user_no_value = if (total_lp_supply > 0) {
-            (((reserve_y as u128) * (user_lp_tokens as u128)) / (total_lp_supply as u128)) as u64
+            (
+                ((reserve_y as u128) * (user_lp_tokens as u128))
+                    / total_lp_supply
+            ) as u64
         } else {
-            0u64
+            0
         };
-        (user_lp_tokens, share_of_pool, user_yes_value, user_no_value)
+
+        (
+            user_lp_tokens,
+            share_of_pool,
+            user_yes_value,
+            user_no_value
+        )
+    }
+
+    #[test_only]
+    public fun authority_apt_balance_for_test<YesToken, NoToken>(
+        market_addr: address
+    ): u64 acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        let market_signer = account::create_signer_with_capability(&m.market_signer_cap);
+        pfs::balance(signer::address_of(&market_signer), m.apt_metadata)
+    }
+
+    #[test_only]
+    public fun lp_supply_for_test<YesToken, NoToken>(
+        market_addr: address
+    ): u128 acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        pool_state::get_lp_supply(&m.pool)
+    }
+
+    #[test_only]
+    public fun internal_lp_balance_for_test<YesToken, NoToken>(
+        user_addr: address,
+        market_addr: address
+    ): u128 acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        if (atable::contains(&m.lp_accounts, user_addr)) {
+            atable::borrow(&m.lp_accounts, user_addr).lp_balance
+        } else {
+            0
+        }
+    }
+
+    #[test_only]
+    public fun effective_liquidity_for_test<YesToken, NoToken>(
+        market_addr: address
+    ): FixedPoint128 acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        pool_state::get_liquidity_parameter(&m.pool)
+    }
+
+    #[test_only]
+    public fun lp_asset_balance_for_test<YesToken, NoToken>(
+        user_addr: address,
+        market_addr: address
+    ): u64 acquires PredictionMarket {
+        assert!(exists<PredictionMarket<YesToken, NoToken>>(market_addr), E_MARKET_NOT_FOUND);
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        if (pfs::primary_store_exists(user_addr, m.lp_metadata)) {
+            let lp_store = pfs::primary_store(user_addr, m.lp_metadata);
+            fa::balance(lp_store)
+        } else {
+            0
+        }
     }
 
 }
