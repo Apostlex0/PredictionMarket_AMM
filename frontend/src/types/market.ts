@@ -13,7 +13,7 @@ export interface Market {
   creator: string;
   
   // PM-AMM specific fields
-  probability: number; // Converted from FixedPoint128 for UI display
+  probability: number; // Probability fraction in [0, 1], e.g. 0.67 = 67%
   totalVolume: number; // Converted from string for UI display
   liquidity: number; // Calculated from reserves for UI display
   totalTraders: number; // Derived/calculated field

@@ -7,7 +7,7 @@
 
 import { Aptos, AptosConfig, Network, InputViewFunctionData } from '@aptos-labs/ts-sdk';
 import type { Market } from '@/types/market';
-import { formatOutcome } from '@/lib/amounts';
+import { aptToOctas, formatOutcome } from '@/lib/amounts';
 
 // ===== CONFIGURATION =====
 
@@ -39,6 +39,18 @@ export interface LiquidityQuote {
   lpTokens: string;
   shareOfPool: string;
 }
+  export interface MarketRuntimeConfig {
+  isDynamic: boolean;
+  feeRateBps: number;
+  liquidityPeriodEndsAt: number | null;
+}
+
+export interface UserLpPosition {
+  lpTokens: string;
+  shareOfPool: string;
+  yesReserveShare: string;
+  noReserveShare: string;
+}
 
 // ===== CONVERSION HELPERS =====
 
@@ -60,22 +72,29 @@ export function probabilityToU128(percentFloat: number): string {
 }
 
 /**
- * Convert USD liquidity to u128 FixedPoint128
- * Formula: amount * 2^64
+ * Convert an APT-denominated liquidity value into the contract's raw
+ * FixedPoint128 value.
+ *
+ * Contract convention:
+ *   integer component = raw 8-decimal collateral/outcome units
+ *
+ * Example:
+ *   "0.1" APT = 10_000_000 octas
+ *   encoded argument = 10_000_000 * 2^64
  */
-export function liquidityToU128(usdAmount: number): string {
-  if (usdAmount <= 0) {
-    throw new Error(`Liquidity must be positive, got ${usdAmount}`);
+export function liquidityValueAptToU128(aptValue: string): string {
+  const rawOctas = aptToOctas(aptValue);
+
+  if (rawOctas <= 0n) {
+    throw new Error('Liquidity value must be greater than zero APT');
   }
 
-  const amount = BigInt(Math.floor(usdAmount));
-  const scale = BigInt('18446744073709551616'); // 2^64
-  const result = amount * scale;
+  const scale = 18_446_744_073_709_551_616n; // 2^64
+  const result = rawOctas * scale;
+  const u128Max = 340_282_366_920_938_463_463_374_607_431_768_211_455n;
 
-  // Check for overflow (u128 max)
-  const U128_MAX = BigInt('340282366920938463463374607431768211455');
-  if (result > U128_MAX) {
-    throw new Error(`Liquidity ${usdAmount} too large, exceeds u128 max`);
+  if (result > u128Max) {
+    throw new Error('Liquidity value exceeds the contract u128 limit');
   }
 
   return result.toString();
@@ -185,10 +204,30 @@ export async function getAllMarkets(): Promise<Market[]> {
         const info = await getMarketInfo(marketAddress);
         if (!info) continue;
 
-        // Fetch price info
-        const priceInfo = await getMarketPriceInfo(marketAddress);
-        const probability = priceInfo ? parseFloat(priceInfo.probability) / 100 : 0.5;
-        const totalVolume = priceInfo ? parseFloat(priceInfo.totalVolume) : 0;
+        const [priceInfo, runtimeConfig, reserves, marketCreator] = await Promise.all([
+          getMarketPriceInfo(marketAddress),
+          getMarketRuntimeConfig(marketAddress),
+          getMarketReserves(marketAddress),
+          getMarketCreator(marketAddress),
+        ]);
+
+        if (!runtimeConfig || !marketCreator) {
+          console.error(`Missing runtime market data for market ${record.pool_id}`);
+          continue;
+        }
+
+        const probability = priceInfo
+          ? parseFloat(priceInfo.probability) / 100
+          : 0.5;
+
+        const totalVolume = priceInfo
+          ? Number(formatOutcome(priceInfo.totalVolume))
+          : 0;
+
+        // This is displayed as reserve inventory, not USD TVL.
+        const reserveInventory = reserves
+          ? Number(formatOutcome(reserves.yes)) + Number(formatOutcome(reserves.no))
+          : 0;
 
         markets.push({
           id: record.pool_id.toString(),
@@ -196,21 +235,24 @@ export async function getAllMarkets(): Promise<Market[]> {
           question: info.question,
           description: info.description,
           category: info.category,
-          createdAt: new Date(info.createdAt * 1000), // Convert Unix timestamp to Date
-          expiresAt: new Date(info.expiresAt * 1000), // Convert Unix timestamp to Date
+          createdAt: new Date(info.createdAt * 1000),
+          expiresAt: new Date(info.expiresAt * 1000),
           resolved: info.resolved,
-          outcome: info.outcome ?? undefined, // Convert null to undefined for optional field
-          creator: record.creator,
+          outcome: info.outcome ?? undefined,
+          creator: marketCreator,
           probability,
           totalVolume,
-          liquidity: 0, // Would need reserves calculation
-          totalTraders: 0, // Would need separate tracking
-          isDynamic: false, // Default to static
-          feeRate: 0, // Would need separate call
+          liquidity: reserveInventory,
+          totalTraders: 0,
+          isDynamic: runtimeConfig.isDynamic,
+          liquidityPeriodEndsAt: runtimeConfig.liquidityPeriodEndsAt === null
+            ? undefined
+            : new Date(runtimeConfig.liquidityPeriodEndsAt * 1000),
+          feeRate: runtimeConfig.feeRateBps,
           initialProbability: probability,
           yesTokenAddress: record.token_x_type,
           noTokenAddress: record.token_y_type,
-          lpTokenAddress: '', // Would need separate call
+          lpTokenAddress: '',
           marketAuthority: marketAddress,
         });
       } catch (err) {
@@ -273,6 +315,35 @@ export async function getMarketInfo(
     };
   } catch (error) {
     console.error('Error fetching market info:', error);
+    return null;
+  }
+}
+
+/**
+ * Get the wallet address authorized to resolve a market.
+ */
+export async function getMarketCreator(
+  marketAddress: string
+): Promise<string | null> {
+  try {
+    const payload: InputViewFunctionData = {
+      function: `${CONTRACT_ADDRESS}::pm_amm::get_market_creator`,
+      typeArguments: [
+        '0x1::string::String',
+        '0x1::string::String',
+      ],
+      functionArguments: [marketAddress],
+    };
+
+    const result = await aptos.view({ payload });
+
+    if (!result || result.length < 1) {
+      return null;
+    }
+
+    return String(result[0]);
+  } catch (error) {
+    console.error('Error fetching market creator:', error);
     return null;
   }
 }
@@ -383,6 +454,45 @@ export async function getMarketReserves(
 }
 
 /**
+ * Get real market runtime configuration.
+ * Returns whether the market is dynamic, its swap fee in basis points,
+ * and its pretrade-liquidity deadline when applicable.
+ */
+export async function getMarketRuntimeConfig(
+  marketAddress: string
+): Promise<MarketRuntimeConfig | null> {
+  try {
+    const payload: InputViewFunctionData = {
+      function: `${CONTRACT_ADDRESS}::pm_amm::get_market_runtime_config`,
+      typeArguments: [
+        '0x1::string::String',
+        '0x1::string::String',
+      ],
+      functionArguments: [marketAddress],
+    };
+
+    const result = await aptos.view({ payload });
+
+    if (!result || result.length < 3) {
+      return null;
+    }
+
+    const deadlineOption = result[2] as { vec?: Array<string | number> } | null;
+    const deadlineValue = deadlineOption?.vec?.[0];
+
+    return {
+      isDynamic: Boolean(result[0]),
+      feeRateBps: Number(result[1]),
+      liquidityPeriodEndsAt:
+        deadlineValue === undefined ? null : Number(deadlineValue),
+    };
+  } catch (error) {
+    console.error('Error fetching market runtime config:', error);
+    return null;
+  }
+}
+
+/**
  * Get user prediction token balances
  * Contract: get_user_prediction_balances<YesToken, NoToken>(user_addr, market_addr)
  * Returns: (u64, u64) - (yes_balance, no_balance)
@@ -408,12 +518,51 @@ export async function getUserBalances(
     }
 
     return {
-      yes: result[0] as string,
-      no: result[1] as string,
-      lp: '0', // Fetch separately if needed
+      yes: String(result[0]),
+      no: String(result[1]),
+      lp: '0',
     };
   } catch (error) {
     console.error('Error fetching user balances:', error);
+    return null;
+  }
+}
+
+/**
+ * Get the user's real LP position from the contract.
+ *
+ * The YES/NO amounts are the user's proportional reserve share. The exact
+ * amount received when burning LP must be obtained through
+ * previewRemoveLiquidity because it also includes fee-vault distributions.
+ */
+export async function getUserLpPosition(
+  userAddress: string,
+  marketAddress: string
+): Promise<UserLpPosition | null> {
+  try {
+    const payload: InputViewFunctionData = {
+      function: `${CONTRACT_ADDRESS}::pm_amm::get_user_lp_position`,
+      typeArguments: [
+        '0x1::string::String',
+        '0x1::string::String',
+      ],
+      functionArguments: [userAddress, marketAddress],
+    };
+
+    const result = await aptos.view({ payload });
+
+    if (!result || result.length < 4) {
+      return null;
+    }
+
+    return {
+      lpTokens: String(result[0]),
+      shareOfPool: String(result[1]),
+      yesReserveShare: String(result[2]),
+      noReserveShare: String(result[3]),
+    };
+  } catch (error) {
+    console.error('Error fetching user LP position:', error);
     return null;
   }
 }
@@ -442,41 +591,37 @@ export async function marketExists(marketAddress: string): Promise<boolean> {
 }
 
 /**
- * Get swap quote
- * Contract: get_swap_quote<X, Y>(pool_owner, amount_in, is_x_to_y)
- * Returns: (u64, FixedPoint128) - (output_amount, price_impact)
+ * Get an executable swap quote from the prediction market's embedded pool.
  *
- * NOTE: The contract's get_swap_quote view function doesn't work for prediction markets
- * because the Pool is stored INSIDE the PredictionMarket struct, not as a standalone resource.
- * The view function checks for Pool<X,Y> with has_key, but it doesn't exist separately.
+ * YES = X and NO = Y:
+ * - isXToY = true  => YES -> NO
+ * - isXToY = false => NO -> YES
  *
- * Swaps still work because they use prediction_market::buy_yes/buy_no which access
- * the pool through the PredictionMarket struct.
- *
- * This function returns null to indicate quotes are unavailable.
+ * Returns raw output token units and raw FixedPoint128 price impact.
  */
 export async function getSwapQuote(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  poolOwner: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  marketAddress: string,
   amountIn: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   isXToY: boolean
 ): Promise<SwapQuote | null> {
-  // The view function doesn't work for prediction markets (pool is embedded in PredictionMarket struct)
-  // Return null to let UI show fallback
-  console.log('getSwapQuote: View function not available for prediction markets (pool is embedded)');
-  return null;
-
-  /* Original code that doesn't work:
   try {
+    const amountInRaw = BigInt(amountIn);
+
+    if (amountInRaw <= 0n) {
+      return null;
+    }
+
     const payload: InputViewFunctionData = {
       function: `${CONTRACT_ADDRESS}::pm_amm::get_swap_quote`,
       typeArguments: [
-        '0x1::string::String', // X = YesToken
-        '0x1::string::String'  // Y = NoToken
+        '0x1::string::String',
+        '0x1::string::String'
       ],
-      functionArguments: [poolOwner, amountIn, isXToY],
+      functionArguments: [
+        marketAddress,
+        amountInRaw.toString(),
+        isXToY
+      ],
     };
 
     const result = await aptos.view({ payload });
@@ -486,14 +631,13 @@ export async function getSwapQuote(
     }
 
     return {
-      outputAmount: result[0] as string,
-      priceImpact: result[1] as string, // FixedPoint128
+      outputAmount: String(result[0]),
+      priceImpact: result[1] as string,
     };
   } catch (error) {
-    console.error('Error getting swap quote:', error);
+    console.error('Error getting executable swap quote:', error);
     return null;
   }
-  */
 }
 
 /**
@@ -503,10 +647,10 @@ export async function getSwapQuote(
  */
 export async function previewAddLiquidity(
   marketAddress: string,
-  desiredValueIncreaseUSD: number
+  desiredValueIncreaseApt: string
 ): Promise<LiquidityQuote | null> {
   try {
-    const desiredValueU128 = liquidityToU128(desiredValueIncreaseUSD);
+    const desiredValueU128 = liquidityValueAptToU128(desiredValueIncreaseApt);
 
     const payload: InputViewFunctionData = {
       function: `${CONTRACT_ADDRESS}::pm_amm::preview_add_liquidity_quote`,
@@ -524,10 +668,10 @@ export async function previewAddLiquidity(
     }
 
     return {
-      requiredYes: result[0] as string,
-      requiredNo: result[1] as string,
-      lpTokens: result[2] as string,
-      shareOfPool: u128ToPercentage(result[3] as string),
+      requiredYes: String(result[0]),
+      requiredNo: String(result[1]),
+      lpTokens: String(result[2]),
+      shareOfPool: String(result[3]),
     };
   } catch (error) {
     console.error('Error previewing add liquidity:', error);
@@ -639,9 +783,9 @@ export function buildBuyNoPayload(
  */
 export function buildAddLiquidityPayload(
   marketAddress: string,
-  desiredValueIncreaseUSD: number
+  desiredValueIncreaseApt: string
 ) {
-  const desiredValueU128 = liquidityToU128(desiredValueIncreaseUSD);
+  const desiredValueU128 = liquidityValueAptToU128(desiredValueIncreaseApt);
 
   return {
     function: `${CONTRACT_ADDRESS}::pm_amm::add_market_liquidity` as const,
