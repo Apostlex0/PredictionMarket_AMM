@@ -188,15 +188,35 @@ module pm_amm::invariant_amm {
         let y = fixed_point::from_u64(reserve_y);
         let dx = fixed_point::from_u64(input_x);
 
+        // Preserve the invariant level of the actual stored reserves.
+        // Stored u64 reserves are rounded outputs of approximate normal-distribution math,
+        // so their evaluated invariant is not guaranteed to be exactly zero.
+        let target_invariant = evaluate_invariant(reserve_x, reserve_y, liquidity_L);
+
         let new_x = fixed_point::add(&x, &dx);
 
-        // Better initial guess based on constant product
-        let initial_guess = fixed_point::div(&fixed_point::mul(&y, &dx), &new_x);
+        // Initial estimate only; Newton converges against the preserved pool invariant.
+        let initial_guess = fixed_point::div(
+            &fixed_point::mul(&y, &dx),
+            &new_x
+        );
 
-        let output = newton_raphson_solve(&new_x, &y, liquidity_L, &initial_guess, true);
+        let output = newton_raphson_solve(
+            &new_x,
+            &y,
+            liquidity_L,
+            &initial_guess,
+            true,
+            &target_invariant
+        );
+
         let out_u64 = fixed_point::to_u64(&output);
-        
-        assert!( out_u64 < reserve_y, error::invalid_argument(E_INSUFFICIENT_OUTPUT));
+
+        assert!(
+            out_u64 > 0 && out_u64 < reserve_y,
+            error::invalid_argument(E_INSUFFICIENT_OUTPUT)
+        );
+
         out_u64
     }
 
@@ -210,116 +230,152 @@ module pm_amm::invariant_amm {
         let y = fixed_point::from_u64(reserve_y);
         let dy = fixed_point::from_u64(input_y);
 
+        // Preserve the invariant level of the actual stored reserves.
+        let target_invariant = evaluate_invariant(reserve_x, reserve_y, liquidity_L);
+
         let new_y = fixed_point::add(&y, &dy);
 
-        let initial_guess = fixed_point::div(&fixed_point::mul(&x, &dy), &new_y);
+        let initial_guess = fixed_point::div(
+            &fixed_point::mul(&x, &dy),
+            &new_y
+        );
 
-        let output = newton_raphson_solve(&x, &new_y, liquidity_L, &initial_guess, false);
+        let output = newton_raphson_solve(
+            &x,
+            &new_y,
+            liquidity_L,
+            &initial_guess,
+            false,
+            &target_invariant
+        );
+
         let out_u64 = fixed_point::to_u64(&output);
-        
-        assert!(out_u64 > 0 && out_u64 < reserve_x, error::invalid_argument(E_INSUFFICIENT_OUTPUT));
+
+        assert!(
+            out_u64 > 0 && out_u64 < reserve_x,
+            error::invalid_argument(E_INSUFFICIENT_OUTPUT)
+        );
+
         out_u64
     }
 
-    /// Newton-Raphson solver with corrected derivatives
-public fun newton_raphson_solve(
-    x_after: &FixedPoint128,
-    y_after: &FixedPoint128,
-    liquidity_L: &FixedPoint128,
-    initial_guess: &FixedPoint128,
-    solving_for_y: bool,
-): FixedPoint128 {
-    let current = *initial_guess;
-    let iterations = 0u8;
+    /// Solve for swap output while preserving the invariant value of the
+    /// actual stored pool reserves.
+    ///
+    /// The pool is initialized from approximated distribution math and rounded
+    /// u64 reserves. Therefore the correct swap condition is:
+    ///
+    ///     I(post_swap_reserves) = I(pre_swap_reserves)
+    ///
+    /// not:
+    ///
+    ///     I(post_swap_reserves) = 0
+    public fun newton_raphson_solve(
+        x_after: &FixedPoint128,
+        y_after: &FixedPoint128,
+        liquidity_L: &FixedPoint128,
+        initial_guess: &FixedPoint128,
+        solving_for_y: bool,
+        target_invariant: &SignedFixedPoint128,
+    ): FixedPoint128 {
+        let current = *initial_guess;
+        let iterations = 0u8;
 
-    while (iterations < MAX_NEWTON_ITERATIONS) {
-        // Compute (curr_x, curr_y) depending on which side we're solving for
-        let (curr_x, curr_y) = if (solving_for_y) {
-            (*x_after, fixed_point::sub(y_after, &current))
-        } else {
-            (fixed_point::sub(x_after, &current), *y_after)
+        while (iterations < MAX_NEWTON_ITERATIONS) {
+            let (curr_x, curr_y) = if (solving_for_y) {
+                (*x_after, fixed_point::sub(y_after, &current))
+            } else {
+                (fixed_point::sub(x_after, &current), *y_after)
+            };
+
+            // Residual is relative to the pool's pre-swap invariant value.
+            let evaluated = evaluate_invariant_fixed_point(
+                &curr_x,
+                &curr_y,
+                liquidity_L
+            );
+            let f_val = signed_fixed_point::sub(
+                &evaluated,
+                target_invariant
+            );
+            let f_abs = signed_fixed_point::abs(&f_val);
+
+            if (fixed_point::less_than(
+                &f_abs,
+                &fixed_point::from_raw(NEWTON_TOLERANCE)
+            )) {
+                return current
+            };
+
+            let deriv = compute_invariant_derivative(
+                &curr_x,
+                &curr_y,
+                liquidity_L,
+                solving_for_y
+            );
+            let deriv_abs = signed_fixed_point::abs(&deriv);
+
+            if (fixed_point::less_than(
+                &deriv_abs,
+                &fixed_point::from_raw(1000)
+            )) {
+                break
+            };
+
+            let adjust = signed_fixed_point::div(&f_val, &deriv);
+            let adjust_abs = signed_fixed_point::abs(&adjust);
+
+            // Prevent an iteration from jumping below zero output.
+            if (fixed_point::greater_than(&adjust_abs, &current)) {
+                adjust_abs = current;
+            };
+
+            if (signed_fixed_point::is_negative(&adjust)) {
+                current = fixed_point::add(&current, &adjust_abs);
+            } else {
+                current = fixed_point::sub(&current, &adjust_abs);
+            };
+
+            iterations = iterations + 1;
         };
 
-        // f(current)
-        let f_val = evaluate_invariant_fixed_point(&curr_x, &curr_y, liquidity_L);
-        let f_abs = signed_fixed_point::abs(&f_val);
+        current
+    }
 
-        // |f| < tolerance => done
-        if (fixed_point::less_than(&f_abs, &fixed_point::from_raw(NEWTON_TOLERANCE))) {
-            return current
-        };
-
-        // f'(current)
-        let deriv = compute_invariant_derivative(&curr_x, &curr_y, liquidity_L, solving_for_y);
-        let deriv_abs = signed_fixed_point::abs(&deriv);
-
-        // Derivative too small => break and return best guess
-        if (fixed_point::less_than(&deriv_abs, &fixed_point::from_raw(1000))) {
-            break
-        };
-
-        // Newton step: adjust = f / f'
-        let adjust = signed_fixed_point::div(&f_val, &deriv);
-        let adjust_abs = signed_fixed_point::abs(&adjust);
-
-        // --- DAMPING & SAFETY ---
-
-        // 1) Dampen if |adjust| > current/2
-        let half_current = fixed_point::div(&current, &fixed_point::two());
-        if (fixed_point::greater_than(&adjust_abs, &half_current)) {
-            // reassign local (no `mut` needed in Move)
-            adjust_abs = fixed_point::div(&adjust_abs, &fixed_point::two());
-        };
-
-        // 2) Don't subtract more than current
-        if (fixed_point::greater_than(&adjust_abs, &current)) {
-            adjust_abs = current;
-        };
-
-        // 3) Apply step in correct direction
-        if (signed_fixed_point::is_negative(&adjust)) {
-            current = fixed_point::add(&current, &adjust_abs);
-        } else {
-            current = fixed_point::sub(&current, &adjust_abs);
-        };
-
-        iterations = iterations + 1;
-    };
-
-    current
-}
-
-    /// CORRECTED DERIVATIVES
-    /// ∂I/∂x = -Φ(z) where z = (y-x)/L
-    /// ∂I/∂y = Φ(z) - 1
+    /// Derivative of f(output) for the Newton solver.
+    ///
+    /// For X -> Y:
+    ///   f(out_y) = I(x + in_x, y - out_y), so df/d(out_y) = 1 - P.
+    ///
+    /// For Y -> X:
+    ///   f(out_x) = I(x - out_x, y + in_y), so df/d(out_x) = P.
+    ///
+    /// Both derivatives are positive for a valid probability 0 < P < 1.
     fun compute_invariant_derivative(
         x: &FixedPoint128,
         y: &FixedPoint128,
         liquidity_L: &FixedPoint128,
-        with_respect_to_y: bool
+        solving_for_y: bool
     ): SignedFixedPoint128 {
-        // Calculate the marginal price P = Φ(z)
         let price = calculate_marginal_price(
             fixed_point::to_u64(x),
             fixed_point::to_u64(y),
             liquidity_L
         );
 
-        if (with_respect_to_y) {
-            // ∂I/∂y = Φ(z) - 1 = P - 1
-            // This is always negative since P < 1
-            if (fixed_point::greater_than(&price, &fixed_point::one())) {
-                // Should not happen in normal operation, but handle gracefully
-                let diff = fixed_point::sub(&price, &fixed_point::one());
-                signed_fixed_point::from_fixed_point(&diff, false)
-            } else {
-                let diff = fixed_point::sub(&fixed_point::one(), &price);
-                signed_fixed_point::from_fixed_point(&diff, true)
-            }
+        assert!(
+            fixed_point::greater_than(&price, &fixed_point::zero())
+                && fixed_point::less_than(&price, &fixed_point::one()),
+            error::invalid_argument(E_INVALID_PRICE)
+        );
+
+        if (solving_for_y) {
+            // Output variable is out_y: dI(x, y - out_y)/d(out_y) = 1 - P.
+            let one_minus_price = fixed_point::sub(&fixed_point::one(), &price);
+            signed_fixed_point::from_fixed_point(&one_minus_price, false)
         } else {
-            // ∂I/∂x = -Φ(z) = -P
-            // This is always negative
-            signed_fixed_point::from_fixed_point(&price, true)
+            // Output variable is out_x: dI(x - out_x, y)/d(out_x) = P.
+            signed_fixed_point::from_fixed_point(&price, false)
         }
     }
 
