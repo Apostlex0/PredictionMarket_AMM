@@ -37,13 +37,10 @@ export default function MarketResolution({ market, onResolutionComplete }: Marke
     }
   }, [successMessage]);
 
-  // Check if user can resolve this market
-  const canResolve = connected && account && (
-    // Market creator can resolve
-    market.creator === account.address.toString() ||
-    // For demo purposes, allow any connected user to resolve mock markets
-    market.id.startsWith('mock-')
-  );
+  const canResolve =
+    connected &&
+    account &&
+    market.creator.toLowerCase() === account.address.toString().toLowerCase();
 
   // Check if market is expired
   const isExpired = market.expiresAt && new Date(market.expiresAt) < new Date();
@@ -61,19 +58,6 @@ export default function MarketResolution({ market, onResolutionComplete }: Marke
 
     if (!canResolve) {
       setError('You are not authorized to resolve this market');
-      return;
-    }
-
-    // Skip resolution for mock markets (just show success)
-    if (market.id.startsWith('mock-')) {
-      setIsResolving(true);
-      setTimeout(() => {
-        setIsResolving(false);
-        setSuccessMessage(`Demo market resolved: ${selectedOutcome ? 'YES' : 'NO'} wins!`);
-        setShowConfirmation(false);
-        setSelectedOutcome(null);
-        onResolutionComplete?.();
-      }, 2000);
       return;
     }
 

@@ -2,7 +2,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, Share2, TrendingUp, Droplets, BarChart3, Sparkles, Loader2, Bookmark, Clock, ExternalLink, Shield, Gift } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Droplets, Loader2, Shield, Gift } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import Link from 'next/link';
@@ -10,14 +10,13 @@ import Navigation from '@/components/Navigation';
 import MarketHeader from '@/components/market-detail/MarketHeader';
 import TradingTab from '@/components/market-detail/TradingTab';
 import LiquidityTab from '@/components/market-detail/LiquidityTab';
-import AnalyticsTab from '@/components/market-detail/AnalyticsTab';
 import MarketPhaseIndicator from '@/components/market-detail/MarketPhaseIndicator';
 import MarketResolution from '@/components/market-detail/MarketResolution';
 import SettlementInterface from '@/components/market-detail/SettlementInterface';
 import { Market } from '@/types/market';
 import { getAllMarkets } from '@/lib/aptos_service';
 
-type Tab = 'trade' | 'liquidity' | 'analytics' | 'resolve' | 'settle';
+type Tab = 'trade' | 'liquidity' | 'resolve' | 'settle';
 
 export default function MarketDetailPage() {
   const params = useParams();
@@ -30,183 +29,47 @@ export default function MarketDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Mock markets for presentation (same as markets page)
-  const getMockMarkets = (): Market[] => [
-    {
-      id: 'mock-1',
-      question: 'Will Bitcoin reach $100,000 by end of 2024?',
-      description: 'This market resolves to YES if Bitcoin (BTC) trades at or above $100,000 on any major exchange before December 31, 2024 23:59:59 UTC.',
-      category: 'crypto',
-      probability: 67,
-      totalVolume: 234567,
-      liquidity: 45678,
-      expiresAt: new Date('2024-12-31'),
-      createdAt: new Date('2024-01-01'),
-      totalTraders: 1234,
-      resolved: false,
-      creator: '0x742d...8f9a',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 50,
-      yesTokenAddress: '0x1234...5678',
-      noTokenAddress: '0x8765...4321',
-      lpTokenAddress: '0xabcd...efgh',
-      poolAddress: '0xabcd...efgh',
-      marketAuthority: '0x742d...8f9a',
-    },
-    {
-      id: 'mock-2',
-      question: 'Will AI achieve AGI before 2030?',
-      description: 'This market resolves to YES if Artificial General Intelligence (AGI) is achieved and publicly demonstrated by any organization before January 1, 2030 00:00:00 UTC.',
-      category: 'technology',
-      probability: 23,
-      totalVolume: 567890,
-      liquidity: 123456,
-      expiresAt: new Date('2030-01-01'),
-      createdAt: new Date('2024-02-15'),
-      totalTraders: 3456,
-      resolved: false,
-      creator: '0x123a...4b5c',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 25,
-      yesTokenAddress: '0x2345...6789',
-      noTokenAddress: '0x9876...5432',
-      lpTokenAddress: '0xbcde...fghi',
-      poolAddress: '0xbcde...fghi',
-      marketAuthority: '0x123a...4b5c',
-    },
-    {
-      id: 'mock-3',
-      question: 'Will Ethereum surpass Bitcoin in market cap?',
-      description: 'This market resolves to YES if Ethereum (ETH) market capitalization exceeds Bitcoin (BTC) market capitalization for at least 7 consecutive days before the expiration date.',
-      category: 'crypto',
-      probability: 15,
-      totalVolume: 123456,
-      liquidity: 34567,
-      expiresAt: new Date('2025-06-30'),
-      createdAt: new Date('2024-03-10'),
-      totalTraders: 892,
-      resolved: false,
-      creator: '0x456d...7e8f',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 20,
-      yesTokenAddress: '0x3456...7890',
-      noTokenAddress: '0x0987...6543',
-      lpTokenAddress: '0xcdef...ghij',
-      poolAddress: '0xcdef...ghij',
-      marketAuthority: '0x456d...7e8f',
-    },
-    {
-      id: 'mock-4',
-      question: 'Will Manchester City win the Premier League 2024-25?',
-      description: 'This market resolves to YES if Manchester City FC wins the Premier League title for the 2024-25 season.',
-      category: 'sports',
-      probability: 45,
-      totalVolume: 89234,
-      liquidity: 23456,
-      expiresAt: new Date('2025-05-25'),
-      createdAt: new Date('2024-08-15'),
-      totalTraders: 567,
-      resolved: false,
-      creator: '0x789g...0h1i',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 40,
-      yesTokenAddress: '0x4567...8901',
-      noTokenAddress: '0x1098...7654',
-      lpTokenAddress: '0xdefg...hijk',
-      poolAddress: '0xdefg...hijk',
-      marketAuthority: '0x789g...0h1i',
-    },
-    {
-      id: 'mock-5',
-      question: 'Will the next US President be a Democrat?',
-      description: 'This market resolves to YES if the candidate from the Democratic Party wins the 2024 US Presidential Election.',
-      category: 'politics',
-      probability: 52,
-      totalVolume: 1234567,
-      liquidity: 345678,
-      expiresAt: new Date('2025-01-20'),
-      createdAt: new Date('2024-01-15'),
-      totalTraders: 5678,
-      resolved: false,
-      creator: '0xabc1...2def',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 50,
-      yesTokenAddress: '0x5678...9012',
-      noTokenAddress: '0x2109...8765',
-      lpTokenAddress: '0xefgh...ijkl',
-      poolAddress: '0xefgh...ijkl',
-      marketAuthority: '0xabc1...2def',
-    },
-    {
-      id: 'mock-6',
-      question: 'Will SpaceX land humans on Mars by 2030?',
-      description: 'This market resolves to YES if SpaceX successfully lands human astronauts on the surface of Mars before January 1, 2030 00:00:00 UTC.',
-      category: 'science',
-      probability: 18,
-      totalVolume: 345678,
-      liquidity: 67890,
-      expiresAt: new Date('2030-01-01'),
-      createdAt: new Date('2024-03-20'),
-      totalTraders: 2345,
-      resolved: false,
-      creator: '0x234b...5cde',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 15,
-      yesTokenAddress: '0x6789...0123',
-      noTokenAddress: '0x3210...9876',
-      lpTokenAddress: '0xfghi...jklm',
-      poolAddress: '0xfghi...jklm',
-      marketAuthority: '0x234b...5cde',
-    },
-  ];
-
-  // Load market data (mock or real)
   useEffect(() => {
+    let cancelled = false;
+
     const loadMarket = async () => {
       try {
         setIsLoading(true);
         setError(null);
-        
-        // Check if it's a mock market first
-        const mockMarkets = getMockMarkets();
-        const mockMarket = mockMarkets.find(m => m.id === marketId);
-        
-        if (mockMarket) {
-          // It's a mock market, use mock data
-          setMarket(mockMarket);
-        } else {
-          // It's potentially a real market, try to load from contract
-          try {
-            // For real markets, we need to load from contract
-            // Since we don't have getMarketInfo by ID, we'll load all markets and find the one
-            const realMarkets = await getAllMarkets();
 
-            const realMarket = realMarkets.find(m => m.id === marketId);
-            if (realMarket) {
-              setMarket(realMarket);
-            } else {
-              setError('Market not found');
-            }
-          } catch (contractError) {
-            console.error('Error loading real market:', contractError);
-            setError('Could not load market from contract');
-          }
+        const realMarkets = await getAllMarkets();
+        const realMarket = realMarkets.find((candidate) => candidate.id === marketId);
+
+        if (cancelled) {
+          return;
         }
-      } catch (error) {
-        console.error('Error loading market:', error);
-        setError('Failed to load market');
+
+        if (!realMarket) {
+          setMarket(null);
+          setError('Market not found on-chain.');
+          return;
+        }
+
+        setMarket(realMarket);
+      } catch (loadError) {
+        console.error('Error loading market:', loadError);
+
+        if (!cancelled) {
+          setMarket(null);
+          setError('Could not load market from the contract.');
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
-    loadMarket();
+    void loadMarket();
+
+    return () => {
+      cancelled = true;
+    };
   }, [marketId]);
 
   // Loading state
@@ -252,20 +115,18 @@ export default function MarketDetailPage() {
     );
   }
 
-  // Check if user can resolve this market
-  const canResolve = connected && account && market && !market.resolved && (
-    // Market creator can resolve
-    market.creator === account.address.toString() ||
-    // For demo purposes, allow any connected user to resolve mock markets
-    market.id.startsWith('mock-')
-  );
+  const canResolve =
+    connected &&
+    account &&
+    market &&
+    !market.resolved &&
+    market.creator.toLowerCase() === account.address.toString().toLowerCase();
 
   const tabs = [
-    { id: 'trade' as Tab, label: 'Trade', description: 'Buy YES or NO tokens', icon: TrendingUp },
-    { id: 'liquidity' as Tab, label: 'Liquidity', description: 'Add or remove liquidity', icon: Droplets },
-    { id: 'analytics' as Tab, label: 'Analytics', description: 'View market statistics', icon: BarChart3 },
-    ...(canResolve ? [{ id: 'resolve' as Tab, label: 'Resolve', description: 'Resolve market outcome', icon: Shield }] : []),
-    ...(market?.resolved ? [{ id: 'settle' as Tab, label: 'Settle', description: 'Claim your winnings', icon: Gift }] : []),
+    { id: 'trade' as Tab, label: 'Trade', description: 'Mint or exchange outcome tokens', icon: TrendingUp },
+    { id: 'liquidity' as Tab, label: 'Liquidity', description: 'Manage your LP position', icon: Droplets },
+    ...(canResolve ? [{ id: 'resolve' as Tab, label: 'Resolve', description: 'Creator-resolve the outcome', icon: Shield }] : []),
+    ...(market.resolved ? [{ id: 'settle' as Tab, label: 'Settle', description: 'Redeem winning tokens', icon: Gift }] : []),
   ];
 
   return (
@@ -343,10 +204,7 @@ export default function MarketDetailPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.4 }}
         >
-          <MarketPhaseIndicator 
-            expiresAt={market.expiresAt}
-            resolved={market.resolved}
-          />
+          <MarketPhaseIndicator market={market} />
         </motion.div>
 
         {/* Enhanced Tabs */}
@@ -402,7 +260,6 @@ export default function MarketDetailPage() {
         >
           {activeTab === 'trade' && <TradingTab market={market} />}
           {activeTab === 'liquidity' && <LiquidityTab market={market} />}
-          {activeTab === 'analytics' && <AnalyticsTab market={market} />}
           {activeTab === 'resolve' && <MarketResolution 
             market={market} 
             onResolutionComplete={() => {
