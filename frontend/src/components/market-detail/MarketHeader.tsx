@@ -3,12 +3,13 @@
 import { Share2, ExternalLink, Clock, Users } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { CATEGORY_COLORS } from '@/lib/constants';
-import { formatCurrency, formatNumber } from '@/lib/format';
 import { Market } from '@/types/market';
 
 export default function MarketHeader({ market }: { market: Market }) {
-  const probabilityPercent = market.probability.toFixed(1);
+  const probabilityPercent = (market.probability * 100).toFixed(1);
   const categoryColor = CATEGORY_COLORS[market.category] || 'from-gray-500 to-slate-500';
+  const formatTokenMetric = (value: number) =>
+    value.toLocaleString(undefined, { maximumFractionDigits: 6 });
 
   return (
     <div className="mb-8">
@@ -40,16 +41,16 @@ export default function MarketHeader({ market }: { market: Market }) {
           valueClassName="text-3xl font-bold bg-gradient-to-r from-pink-400 to-purple-400 text-transparent bg-clip-text"
         />
         <StatBox
-          label="24h Volume"
-          value={formatCurrency(market.totalVolume)}
+          label="Cumulative Token Volume"
+          value={formatTokenMetric(market.totalVolume)}
         />
         <StatBox
-          label="Liquidity"
-          value={formatCurrency(market.liquidity)}
+          label="Reserve Inventory"
+          value={formatTokenMetric(market.liquidity)}
         />
         <StatBox
-          label="Traders"
-          value={formatNumber(market.totalTraders)}
+          label="Trading Fee"
+          value={`${(market.feeRate / 100).toFixed(2)}%`}
         />
       </div>
 

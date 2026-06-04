@@ -7,10 +7,10 @@ import { formatDistanceToNow } from 'date-fns';
 import { Market } from '@/types/market';
 
 export default function MarketCard({ market }: { market: Market }) {
-  const formatCurrency = (value: number) => {
-    if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}M`;
-    if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
-    return `$${value}`;
+  const formatTokenMetric = (value: number) => {
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   };
 
   const getCategoryColor = (category: string) => {
@@ -24,7 +24,7 @@ export default function MarketCard({ market }: { market: Market }) {
     return colors[category] || 'from-gray-400 to-slate-500';
   };
 
-  const probabilityPercentage = market.probability.toFixed(0);
+  const probabilityPercentage = (market.probability * 100).toFixed(0);
 
   return (
     <Link href={`/markets/${market.id}`}>
@@ -92,20 +92,20 @@ export default function MarketCard({ market }: { market: Market }) {
           <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/10">
             <StatItem
               icon={<TrendingUp className="w-4 h-4" />}
-              label="Volume"
-              value={formatCurrency(market.totalVolume)}
+              label="Token Volume"
+              value={formatTokenMetric(market.totalVolume)}
               color="text-emerald-400"
             />
             <StatItem
               icon={<Droplets className="w-4 h-4" />}
-              label="Liquidity"
-              value={formatCurrency(market.liquidity)}
+              label="Reserve Inventory"
+              value={formatTokenMetric(market.liquidity)}
               color="text-blue-400"
             />
             <StatItem
-              icon={<Users className="w-4 h-4" />}
-              label="Traders"
-              value={market.totalTraders.toLocaleString()}
+              icon={<Zap className="w-4 h-4" />}
+              label="Fee"
+              value={`${(market.feeRate / 100).toFixed(2)}%`}
               color="text-purple-400"
             />
             <StatItem

@@ -66,12 +66,6 @@ export default function MintCompleteSet({ market }: { market: Market }) {
       return;
     }
 
-    // Skip minting for mock markets
-    if (market.id.startsWith('mock-')) {
-      setError('Cannot mint tokens for demo markets');
-      return;
-    }
-
     try {
       setIsLoading(true);
       setError(null);
@@ -121,25 +115,6 @@ export default function MintCompleteSet({ market }: { market: Market }) {
           </p>
         </div>
 
-        {/* Mock Market Warning */}
-        {market.id.startsWith('mock-') && (
-          <motion.div 
-            className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <div className="flex items-center space-x-3">
-              <AlertCircle className="w-5 h-5 text-yellow-400" />
-              <div>
-                <div className="font-semibold text-yellow-400 mb-1">Demo Market</div>
-                <div className="text-sm text-yellow-300">
-                  This is a demo market. Token minting is disabled for presentation purposes.
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
         {/* Error Message */}
         {error && (
           <motion.div 
@@ -170,7 +145,7 @@ export default function MintCompleteSet({ market }: { market: Market }) {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-gray-400">APT Amount to Deposit</span>
-            <span className="text-sm text-gray-400">Wallet: 0.00 APT</span>
+            <span className="text-sm text-gray-400">Collateral Asset: APT</span>
           </div>
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
             <div className="flex items-center justify-between">

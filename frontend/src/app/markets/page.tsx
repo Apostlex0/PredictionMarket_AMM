@@ -1,7 +1,7 @@
 // src/app/markets/page.tsx
 'use client';
 import { useState, useEffect } from 'react';
-import { Search, Filter, TrendingUp, Clock, DollarSign, Sparkles, Zap, Activity, Loader2 } from 'lucide-react';
+import { Search, Filter, Sparkles, Zap, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Navigation from '@/components/Navigation';
 import MarketCard from '@/components/markets/MarketCard';
@@ -29,177 +29,24 @@ export default function MarketsPage() {
 
   const selectedSortOption = sortOptions.find(option => option.id === sortBy) || sortOptions[0];
 
-  // Mock markets for presentation (always shown as filler)
-  const getMockMarkets = (): Market[] => [
-    {
-      id: 'mock-1',
-      question: 'Will Bitcoin reach $100,000 by end of 2024?',
-      description: 'Demo market for presentation purposes',
-      category: 'crypto',
-      probability: 67,
-      totalVolume: 234567,
-      liquidity: 45678,
-      expiresAt: new Date('2024-12-31'),
-      createdAt: new Date('2024-01-01'),
-      totalTraders: 1234,
-      resolved: false,
-      creator: '0x742d...8f9a',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 50,
-      yesTokenAddress: '0x1234...5678',
-      noTokenAddress: '0x8765...4321',
-      lpTokenAddress: '0xabcd...efgh',
-      poolAddress: '0xabcd...efgh',
-      marketAuthority: '0x742d...8f9a',
-    },
-    {
-      id: 'mock-2',
-      question: 'Will AI achieve AGI before 2030?',
-      description: 'Demo market for presentation purposes',
-      category: 'technology',
-      probability: 23,
-      totalVolume: 567890,
-      liquidity: 123456,
-      expiresAt: new Date('2030-01-01'),
-      createdAt: new Date('2024-02-15'),
-      totalTraders: 3456,
-      resolved: false,
-      creator: '0x123a...4b5c',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 25,
-      yesTokenAddress: '0x2345...6789',
-      noTokenAddress: '0x9876...5432',
-      lpTokenAddress: '0xbcde...fghi',
-      poolAddress: '0xbcde...fghi',
-      marketAuthority: '0x123a...4b5c',
-    },
-    {
-      id: 'mock-3',
-      question: 'Will Ethereum surpass Bitcoin in market cap?',
-      description: 'Demo market for presentation purposes',
-      category: 'crypto',
-      probability: 15,
-      totalVolume: 123456,
-      liquidity: 34567,
-      expiresAt: new Date('2025-06-30'),
-      createdAt: new Date('2024-03-10'),
-      totalTraders: 892,
-      resolved: false,
-      creator: '0x456d...7e8f',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 20,
-      yesTokenAddress: '0x3456...7890',
-      noTokenAddress: '0x0987...6543',
-      lpTokenAddress: '0xcdef...ghij',
-      poolAddress: '0xcdef...ghij',
-      marketAuthority: '0x456d...7e8f',
-    },
-    {
-      id: 'mock-4',
-      question: 'Will Manchester City win the Premier League 2024-25?',
-      description: 'Demo market for presentation purposes',
-      category: 'sports',
-      probability: 45,
-      totalVolume: 89234,
-      liquidity: 23456,
-      expiresAt: new Date('2025-05-25'),
-      createdAt: new Date('2024-08-15'),
-      totalTraders: 567,
-      resolved: false,
-      creator: '0x789g...0h1i',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 40,
-      yesTokenAddress: '0x4567...8901',
-      noTokenAddress: '0x1098...7654',
-      lpTokenAddress: '0xdefg...hijk',
-      poolAddress: '0xdefg...hijk',
-      marketAuthority: '0x789g...0h1i',
-    },
-    {
-      id: 'mock-5',
-      question: 'Will the next US President be a Democrat?',
-      description: 'Demo market for presentation purposes',
-      category: 'politics',
-      probability: 52,
-      totalVolume: 1234567,
-      liquidity: 345678,
-      expiresAt: new Date('2025-01-20'),
-      createdAt: new Date('2024-01-15'),
-      totalTraders: 5678,
-      resolved: false,
-      creator: '0xabc1...2def',
-      isDynamic: false,
-      feeRate: 30,
-      initialProbability: 50,
-      yesTokenAddress: '0x5678...9012',
-      noTokenAddress: '0x2109...8765',
-      lpTokenAddress: '0xefgh...ijkl',
-      poolAddress: '0xefgh...ijkl',
-      marketAuthority: '0xabc1...2def',
-    },
-    {
-      id: 'mock-6',
-      question: 'Will SpaceX land humans on Mars by 2030?',
-      description: 'Demo market for presentation purposes',
-      category: 'science',
-      probability: 18,
-      totalVolume: 345678,
-      liquidity: 67890,
-      expiresAt: new Date('2030-01-01'),
-      createdAt: new Date('2024-03-20'),
-      totalTraders: 2345,
-      resolved: false,
-      creator: '0x234b...5cde',
-      isDynamic: true,
-      feeRate: 30,
-      initialProbability: 15,
-      yesTokenAddress: '0x6789...0123',
-      noTokenAddress: '0x3210...9876',
-      lpTokenAddress: '0xfghi...jklm',
-      poolAddress: '0xfghi...jklm',
-      marketAuthority: '0x234b...5cde',
-    },
-  ];
-
-  // Load real markets from contract
   useEffect(() => {
     const loadRealMarkets = async () => {
       try {
         setIsLoadingRealMarkets(true);
         setRealMarketsError(null);
-        
-        // Get mock markets first (always available)
-        const mockMarkets = getMockMarkets();
-        
-        try {
-          // Try to load real markets from contract
-          const realMarkets = await getAllMarkets();
 
-          console.log('Loaded real markets:', realMarkets);
-
-          // Combine mock markets + real markets
-          setAllMarkets([...mockMarkets, ...realMarkets]);
-        } catch (contractError) {
-          console.warn('Could not load real markets from contract:', contractError);
-          // Fall back to just mock markets if contract fails
-          setAllMarkets(mockMarkets);
-          setRealMarketsError('Could not load real markets from contract');
-        }
+        const realMarkets = await getAllMarkets();
+        setAllMarkets(realMarkets);
       } catch (error) {
         console.error('Error loading markets:', error);
-        // Fallback to mock markets only
-        setAllMarkets(getMockMarkets());
-        setRealMarketsError('Failed to load markets');
+        setAllMarkets([]);
+        setRealMarketsError('Failed to load on-chain markets.');
       } finally {
         setIsLoadingRealMarkets(false);
       }
     };
 
-    loadRealMarkets();
+    void loadRealMarkets();
   }, []);
 
   // Filter and sort markets
@@ -323,39 +170,6 @@ export default function MarketsPage() {
               <Zap className="w-5 h-5 text-cyan-400" />
               Trade on the outcome of real-world events with optimal liquidity
             </motion.p>
-          </motion.div>
-
-          {/* Enhanced Stats Bar */}
-          <motion.div 
-            className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.6 }}
-          >
-            <StatCard
-              icon={<TrendingUp className="w-5 h-5" />}
-              label="24h Volume"
-              value="$2.4M"
-              change={"+12.5%"}
-            />
-            <StatCard
-              icon={<DollarSign className="w-5 h-5" />}
-              label="Total Liquidity"
-              value="$8.7M"
-              change={"+5.2%"}
-            />
-            <StatCard
-              icon={<Activity className="w-5 h-5" />}
-              label="Active Markets"
-              value="127"
-              change={"+8"}
-            />
-            <StatCard
-              icon={<Zap className="w-5 h-5" />}
-              label="Total Traders"
-              value="12.3K"
-              change={"+18.7%"}
-            />
           </motion.div>
 
           {/* Enhanced Search and Filters */}
@@ -484,7 +298,7 @@ export default function MarketsPage() {
                 <div>
                   <div className="font-semibold text-yellow-400 mb-1">Contract Connection Issue</div>
                   <div className="text-sm text-yellow-300">
-                    {realMarketsError}. Showing demo markets only.
+                    {realMarketsError}
                   </div>
                 </div>
               </div>
