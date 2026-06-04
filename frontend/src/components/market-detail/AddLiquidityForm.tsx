@@ -31,7 +31,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-    // Get liquidity preview when USD amount changes
+    // Get liquidity preview when the APT-denominated value changes
     useEffect(() => {
         const getPreview = async () => {
             if (!desiredValue || parseFloat(desiredValue) <= 0) {
@@ -45,7 +45,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
             try {
                 const result = await previewAddLiquidity(
                     market.poolAddress,
-                    parseFloat(desiredValue)
+                    desiredValue
                 );
 
                 if (result) {
@@ -85,7 +85,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
         try {
             const payload = buildAddLiquidityPayload(
                 market.poolAddress,
-                parseFloat(desiredValue)
+                desiredValue
             );
 
             await signAndSubmitTransaction({
@@ -149,11 +149,11 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                     </div>
                 </div>
 
-                {/* USD Value Input */}
+                {/* APT-denominated pool-value input */}
                 <div className="mb-6">
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-400 flex items-center space-x-2">
-                             Desired Liquidity Value
+                             Desired Liquidity Value (APT)
                         </span>
                     </div>
                     <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
@@ -165,10 +165,10 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                                 placeholder="0.00"
                                 className="bg-transparent text-3xl font-bold text-white outline-none w-full"
                                 min="0"
-                                step="0.01"
+                                step="0.001"
                             />
                             <div className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-bold text-sm">
-                                VALUE
+                                APT
                             </div>
                         </div>
                     </div>
@@ -229,14 +229,12 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                     </div>
                 )}
 
-                {/* Dynamic Pool Benefits */}
                 {market.isDynamic && (
-                    <div className="mb-6 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl flex items-start space-x-3">
-                        <Info className="w-5 h-5 text-purple-400 mt-0.5 flex-shrink-0" />
+                    <div className="mb-6 p-4 bg-gradient-to-r from-purple-500/10 to-cyan-500/10 border border-purple-500/30 rounded-2xl">
                         <div className="text-sm text-gray-300">
-                            <div className="font-semibold text-purple-400 mb-1">Dynamic Pool Benefits</div>
+                            <div className="font-semibold text-purple-400 mb-1">Dynamic Pool</div>
                             <div>
-                                This dynamic pool provides automatic loss protection through time-based withdrawals. Your LP position is protected from impermanent loss as the market approaches expiration.
+                                Dynamic liquidity can be added only during the initial liquidity-collection period. After trading begins, the pool&apos;s pricing liquidity parameter decays toward market expiry.
                             </div>
                         </div>
                     </div>
@@ -249,7 +247,7 @@ export default function AddLiquidityForm({ market }: { market: Market }) {
                         <div className="text-sm text-gray-300">
                             <div className="font-semibold text-orange-400 mb-1">Impermanent Loss Warning</div>
                             <div>
-                                This static pool exposes you to loss-vs-rebalancing (LVR). Consider dynamic pools for automatic loss protection.
+                                Static pools retain a fixed liquidity parameter throughout the market lifetime. Dynamic pools use a time-decaying pricing liquidity parameter after their trading phase begins.
                             </div>
                         </div>
                     </div>
