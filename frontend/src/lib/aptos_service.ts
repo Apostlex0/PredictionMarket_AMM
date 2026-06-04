@@ -12,7 +12,7 @@ import { aptToOctas, formatOutcome } from '@/lib/amounts';
 // ===== CONFIGURATION =====
 
 export const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  '0xf95728f054fc19c29a9015073408d46b3c18a5c0d9dda993be3ef35280f20f78';
+  '0x07435bfcb075db73c16ed1a269d044371ad325e2c4fa9e32f654fd15cde316b0';
 
 const config = new AptosConfig({
   network: Network.TESTNET,
