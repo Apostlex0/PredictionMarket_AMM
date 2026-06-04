@@ -239,6 +239,13 @@ public fun get_market_info<YesToken, NoToken>(
 }
 
 #[view]
+public fun get_market_creator<YesToken, NoToken>(
+    market_addr: address
+): address {
+    prediction_market::get_market_creator<YesToken, NoToken>(market_addr)
+}
+
+#[view]
 public fun get_market_price_info<YesToken, NoToken>(
     market_addr: address
 ): (FixedPoint128, u128) {

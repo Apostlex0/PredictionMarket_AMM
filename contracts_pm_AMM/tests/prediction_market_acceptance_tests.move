@@ -3,7 +3,7 @@ module pm_amm::prediction_market_acceptance_tests {
     use std::signer;
     use std::string;
     use std::option;
-
+    use std::vector;
     use aptos_framework::account;
     use aptos_framework::aptos_coin;
     use aptos_framework::primary_fungible_store;
@@ -34,6 +34,8 @@ module pm_amm::prediction_market_acceptance_tests {
     const E_RUNTIME_CONFIG_DYNAMIC_MISMATCH: u64 = 19;
     const E_RUNTIME_CONFIG_FEE_MISMATCH: u64 = 20;
     const E_RUNTIME_CONFIG_DEADLINE_MISSING: u64 = 21;
+    const E_FACADE_CREATOR_MISMATCH: u64 = 22;
+    const E_FACADE_REGISTRY_MISMATCH: u64 = 23;
 
     const FUND_AMOUNT: u64 = 100_000_000_000;
     const INITIAL_POOL_VALUE: u64 = 1_000_000_000;
@@ -124,6 +126,58 @@ module pm_amm::prediction_market_acceptance_tests {
         );
 
         market_addr
+    }
+
+        #[test(
+        aptos_framework = @aptos_framework,
+        admin = @0x42,
+        creator = @0xCAFE,
+        user = @0xBEEF
+    )]
+    fun public_facade_exposes_actual_creator_for_resolution(
+        aptos_framework: &signer,
+        admin: &signer,
+        creator: &signer,
+        user: &signer
+    ) {
+        setup(aptos_framework, creator, user);
+        account::create_account_for_test(signer::address_of(admin));
+
+        pm_amm::initialize(admin, signer::address_of(admin), 0);
+
+        let expected_market_addr =
+            prediction_market::next_market_address(signer::address_of(creator));
+
+        pm_amm::create_prediction_market<TestYes, TestNo, TestCollateral>(
+            creator,
+            b"Will public facade creator lookup work?",
+            b"Facade creator resolution test",
+            b"Testing",
+            MARKET_DURATION_SECS,
+            fixed_point::raw_value(&fixed_point::from_fraction(3, 5)),
+            fixed_point::raw_value(&fixed_point::from_u64(INITIAL_POOL_VALUE)),
+            FEE_BPS,
+            b"Creator-resolved after expiry",
+            false
+        );
+
+        let registered_markets = pm_amm::get_all_markets();
+
+        assert!(
+            vector::length(&registered_markets) == 1,
+            E_FACADE_REGISTRY_MISMATCH
+        );
+
+        assert!(
+            pm_amm::market_exists<TestYes, TestNo>(expected_market_addr),
+            E_FACADE_REGISTRY_MISMATCH
+        );
+
+        assert!(
+            pm_amm::get_market_creator<TestYes, TestNo>(expected_market_addr)
+                == signer::address_of(creator),
+            E_FACADE_CREATOR_MISMATCH
+        );
     }
 
     fun max_u64(a: u64, b: u64): u64 {

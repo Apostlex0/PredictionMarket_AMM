@@ -9,7 +9,6 @@ module pm_amm::pool_state {
     use pm_amm::invariant_amm;
 
     friend pm_amm::dynamic_tracking;
-    friend pm_amm::simple_dynamic_tracking;
     friend pm_amm::prediction_market;
     friend pm_amm::pm_amm;
 

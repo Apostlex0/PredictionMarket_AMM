@@ -549,6 +549,19 @@ module pm_amm::prediction_market {
         let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
         (m.question, m.description, m.category, m.created_at, m.expires_at, m.resolved, m.outcome_yes)
     }
+
+        /// Return the wallet address authorized to resolve this market.
+    public fun get_market_creator<YesToken, NoToken>(
+        market_addr: address
+    ): address acquires PredictionMarket {
+        assert!(
+            exists<PredictionMarket<YesToken, NoToken>>(market_addr),
+            E_MARKET_NOT_FOUND
+        );
+
+        let m = borrow_global<PredictionMarket<YesToken, NoToken>>(market_addr);
+        m.creator
+    }
     
     /// Get market pricing information
     public fun get_market_price<YesToken, NoToken>(market_addr: address): (FixedPoint128, u128) acquires PredictionMarket {
